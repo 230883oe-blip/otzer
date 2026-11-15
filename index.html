@@ -246,6 +246,13 @@ footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px
         <label for="txt" id="txtLabel">הטקסט</label>
         <textarea id="txt" placeholder="הדבק כאן את הטקסט… אפשר גם להדביק קישור לכתבה או לדף אינטרנט, ואקרא אותו בעצמי."></textarea>
         <div class="hint" id="modeHint"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn sec" id="pick" type="button">📎 צרף קובץ</button>
+          <button class="btn sec hide" id="clrFile" type="button">הסר קובץ</button>
+          <input type="file" id="file" class="hide"
+                 accept=".pdf,.docx,.txt,.md,.csv,.json,.rtf,.htm,.html,.srt,image/*">
+        </div>
+        <div id="fileNote"></div>
       </div>
       <div class="field">
         <label for="extra">הנחיה נוספת (לא חובה)</label>
@@ -538,10 +545,577 @@ function readLink(url){
   return tryOne();
 }
 
+/* ===================================================================
+   ספריא — הבאת המקור האמיתי, בדפדפן של המשתמש.   (15/11/26)
+
+   למה זה כאן ולא במודל: עד היום "סיכום הלכתי בהרחבה" היה פרומפט בלבד,
+   והמודל כתב מהזיכרון שלו. במדידה: על "סימן קפד יורה דעה" הוא כתב
+   סיכום שלם ומשכנע על **טבילת כלים**, בזמן שסימן קפד ביורה דעה הוא
+   דיני וסתות. זה לא ליקוי ניסוח אלא תוכן שגוי לחלוטין, ואין פרומפט
+   שמתקן אותו — צריך להביא את הלשון עצמה.
+
+   ספריא מחזירה `access-control-allow-origin: *` (נמדד 15/11/26), ולכן
+   אפשר לפנות אליה ישירות מהדפדפן בלי שרת ובלי מפתח. זה גם מה ששומר
+   על `"oauthScopes": []` ב-Apps Script — אין כאן UrlFetchApp.
+   =================================================================== */
+
+var SEF = 'https://www.sefaria.org/api/v3/texts/';
+
+/* שם החלק בספריא. נמדד: `Tur, Yoreh De'ah` ו-`Shulchan Arukh, Yoreh De'ah`
+   שניהם תקפים, כלומר שם אחד לכל הספרים ואין צורך בשתי צורות. */
+var CHELEK = [
+  { re: /יורה\s*דעה|יו["״׳']?\s*ד(?![א-ת])/,   en: "Yoreh De'ah",   he: 'יורה דעה' },
+  { re: /אורח\s*חיים|או["״׳']?\s*ח(?![א-ת])/,  en: 'Orach Chayim',  he: 'אורח חיים' },
+  { re: /חושן\s*משפט|חו["״׳']?\s*מ(?![א-ת])/,  en: 'Choshen Mishpat', he: 'חושן משפט' },
+  { re: /אבן\s*ה?עזר|אה["״׳']?\s*ע(?![א-ת])/,  en: 'Even HaEzer',   he: 'אבן העזר' }
+];
+
+/* נושאי הכלים, וכל אחד רק בחלק שבו הוא קיים. נושא כלים שאינו קיים
+   בחלק מחזיר שגיאה מספריא — ובקשה מיותרת היא גם זמן וגם רעש. */
+var NOSEI = [
+  { en: 'Turei Zahav',      he: 'ט״ז',           parts: ['oc','yd','eh','cm'] },
+  { en: 'Siftei Kohen',     he: 'ש״ך',           parts: ['yd','cm'] },
+  { en: 'Magen Avraham',    he: 'מגן אברהם',     parts: ['oc'] },
+  { en: "Me'irat Einayim",  he: 'סמ״ע',          parts: ['cm'] },
+  { en: 'Pitchei Teshuva',  he: 'פתחי תשובה',    parts: ['yd','eh','cm'] },
+  { en: "Ba'er Hetev",      he: 'באר היטב',      parts: ['oc','yd','eh','cm'] },
+  { en: 'Beur HaGra',       he: 'ביאור הגר״א',   parts: ['oc','yd','eh','cm'] }
+];
+var PART_CODE = { "Yoreh De'ah":'yd', 'Orach Chayim':'oc', 'Choshen Mishpat':'cm', 'Even HaEzer':'eh' };
+
+/* מסכתות הש"ס: עברית → השם בספריא. */
+var MASECHET = {
+  'ברכות':'Berakhot','שבת':'Shabbat','עירובין':'Eruvin','פסחים':'Pesachim','יומא':'Yoma',
+  'סוכה':'Sukkah','ביצה':'Beitzah','ראש השנה':'Rosh Hashanah','תענית':'Taanit','מגילה':'Megillah',
+  'מועד קטן':'Moed Katan','חגיגה':'Chagigah','יבמות':'Yevamot','כתובות':'Ketubot','נדרים':'Nedarim',
+  'נזיר':'Nazir','סוטה':'Sotah','גיטין':'Gittin','קידושין':'Kiddushin','בבא קמא':'Bava Kamma',
+  'בבא מציעא':'Bava Metzia','בבא מצעא':'Bava Metzia','בבא בתרא':'Bava Batra','סנהדרין':'Sanhedrin',
+  'מכות':'Makkot','מכות ':'Makkot','שבועות':'Shevuot','עבודה זרה':'Avodah Zarah','עבודה-זרה':'Avodah Zarah',
+  'הוריות':'Horayot','זבחים':'Zevachim','מנחות':'Menachot','חולין':'Chullin','בכורות':'Bekhorot',
+  'ערכין':'Arakhin','תמורה':'Temurah','כריתות':'Keritot','מעילה':'Meilah','תמיד':'Tamid',
+  'מדות':'Middot','קינים':'Kinnim','נדה':'Niddah','נידה':'Niddah','מכשירין':'Makhshirin'
+};
+
+/* גימטריה. "קפד" → 184. תשרק נקראים גם כאלף־אלפיים כשצריך, אבל לסימן
+   בשולחן ערוך די בפשוט: הסכום. */
+var GIM = { 'א':1,'ב':2,'ג':3,'ד':4,'ה':5,'ו':6,'ז':7,'ח':8,'ט':9,
+            'י':10,'כ':20,'ך':20,'ל':30,'מ':40,'ם':40,'נ':50,'ן':50,
+            'ס':60,'ע':70,'פ':80,'ף':80,'צ':90,'ץ':90,'ק':100,'ר':200,'ש':300,'ת':400 };
+
+function gimatria(s){
+  var n = 0, i;
+  s = (s || '').replace(/["״׳'\s]/g, '');
+  if(!s) return 0;
+  for(i = 0; i < s.length; i++){
+    if(!(s.charAt(i) in GIM)) return 0;
+    n += GIM[s.charAt(i)];
+  }
+  return n;
+}
+
+function sefClean(s){
+  if(typeof s !== 'string') return '';
+  s = s.replace(/<[^>]+>/g, ' ');
+  var d = document.createElement('textarea'); d.innerHTML = s; s = d.value;
+  /* ניקוד וטעמים: הרמב"ם ומקצת המקורות בספריא מנוקדים, והניקוד מכביד
+     על המודל בלי להוסיף מידע. */
+  return s.replace(/[֑-ׇ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/* פריסת מערך מקונן לרשימת קטעים. ל-ש״ך יש שלוש רמות (סימן/סעיף/ס״ק),
+   ולשו"ע שתיים — ואם לא פורסים, חצי החומר נעלם בשקט. */
+function sefFlat(x){
+  if(typeof x === 'string') return x.trim() ? [x] : [];
+  var out = [], i;
+  for(i = 0; i < (x || []).length; i++) out = out.concat(sefFlat(x[i]));
+  return out;
+}
+
+function sefText(ref){
+  var url = SEF + encodeURIComponent(ref.replace(/ /g, '_')).replace(/%2C/g, ',') + '?version=hebrew';
+  return withTimeout(fetch(url).then(function(r){ return r.ok ? r.json() : null; }), 35000)
+    .then(function(d){
+      if(!d || d.error || !d.versions || !d.versions.length) return [];
+      return sefFlat(d.versions[0].text).map(sefClean).filter(function(s){ return s.length > 1; });
+    })
+    .catch(function(){ return []; });
+}
+
+var HEBNUM = ['','א׳','ב׳','ג׳','ד׳','ה׳','ו׳','ז׳','ח׳','ט׳','י׳','י״א','י״ב','י״ג','י״ד','ט״ו',
+              'ט״ז','י״ז','י״ח','י״ט','כ׳'];
+function hnum(n){ return HEBNUM[n] || String(n); }
+
+/* ---------- זיהוי הבקשה ---------- */
+
+/* מראה מקום של שולחן ערוך: סימן + חלק. מחזיר null אם אין.
+   הזיהוי דורש את שתי החוליות: מספר סימן **וגם** חלק. "סימן קפד" לבדו
+   אינו מראה מקום — הוא קיים בארבעה חלקים שונים ובכל אחד נושא אחר,
+   וניחוש של החלק היה מחזיר בדיוק את התקלה שבאנו לתקן. */
+function parseSiman(t){
+  t = (t || '').replace(/[‎‏‪-‮]/g, '');
+  var part = null, i;
+  for(i = 0; i < CHELEK.length; i++) if(CHELEK[i].re.test(t)){ part = CHELEK[i]; break; }
+  if(!part) return null;
+
+  var sim = 0, m;
+  /* ספרות קודם: "סימן 184" חד־משמעי. */
+  m = t.match(/(?:סימן|סי['׳]|סימנים)\s*(\d{1,3})(?![\d])/);
+  if(m) sim = parseInt(m[1], 10);
+  if(!sim){
+    m = t.match(/(?:סימן|סי['׳])\s*([א-ת]["״׳']?[א-ת]?["״׳']?[א-ת]?)(?![א-ת])/);
+    if(m) sim = gimatria(m[1]);
+  }
+  if(!sim || sim > 600) return null;
+
+  var seifim = [], mm = t.match(/סעיף\s*(\d{1,2})(?![\d])/g) || [];
+  for(i = 0; i < mm.length; i++) seifim.push(parseInt(mm[i].replace(/\D/g,''), 10));
+  return { part: part, siman: sim, seifim: seifim };
+}
+
+/* דף גמרא: "ברכות ה ע״ב" / "בבא מציעא כט." / "עבודה זרה עה:" */
+function parseDaf(t){
+  t = (t || '').replace(/[‎‏]/g, '');
+  var name = null, en = null, k;
+  for(k in MASECHET){
+    if(MASECHET.hasOwnProperty(k) && t.indexOf(k) >= 0 && (!name || k.length > name.length)){
+      name = k; en = MASECHET[k];
+    }
+  }
+  if(!en) return null;
+  var rest = t.substring(t.indexOf(name) + name.length);
+  var daf = 0, m = rest.match(/^\s*(?:דף\s*)?(\d{1,3})(?![\d])/);
+  if(m) daf = parseInt(m[1], 10);
+  if(!daf){
+    m = rest.match(/^\s*(?:דף\s*)?([א-ת]["״׳']?[א-ת]?)(?![א-ת])/);
+    if(m) daf = gimatria(m[1]);
+  }
+  if(!daf || daf > 180) return null;
+  var side = /ע["״]?ב|עמוד\s*ב|:/.test(rest) ? 'b' : 'a';
+  return { he: name, en: en, daf: daf, side: side, ref: en + ' ' + daf + side };
+}
+
+/* מה המשתמש ביקש להביא. בלי אזכור — טור, בית יוסף, שו"ע ונושאי הכלים,
+   כלומר בדיוק מה שבוט הטקסטים מביא כברירת מחדל. */
+function wantedBooks(t){
+  t = t || '';
+  var any = /טור|בית\s*יוסף|ב["״]י|שולחן\s*ערוך|שו["״]ע|נושאי\s*כלים|נושא\s*כלים/.test(t);
+  var w = {
+    tur:  !any || /טור/.test(t),
+    by:   !any || /בית\s*יוסף|ב["״]י/.test(t),
+    sa:   true,
+    nosei: !any || /נושאי?\s*כלים|ש["״]ך|ט["״]ז|פתחי\s*תשובה|סמ["״]ע|מגן\s*אברהם|באר\s*היטב|גר["״]א/.test(t)
+  };
+  var named = [], i;
+  for(i = 0; i < NOSEI.length; i++){
+    var n = NOSEI[i];
+    if(n.he === 'ט״ז'        && /ט["״]ז|טורי\s*זהב/.test(t)) named.push(n);
+    else if(n.he === 'ש״ך'   && /ש["״]ך|שפתי\s*כהן/.test(t)) named.push(n);
+    else if(n.he === 'פתחי תשובה' && /פתחי\s*תשובה/.test(t)) named.push(n);
+    else if(n.he === 'סמ״ע'  && /סמ["״]ע/.test(t)) named.push(n);
+    else if(n.he === 'מגן אברהם' && /מגן\s*אברהם|מג["״]א/.test(t)) named.push(n);
+    else if(n.he === 'באר היטב' && /באר\s*היטב/.test(t)) named.push(n);
+    else if(n.he === 'ביאור הגר״א' && /גר["״]א/.test(t)) named.push(n);
+  }
+  w.named = named;
+  return w;
+}
+
+/* ---------- ההבאה ---------- */
+
+function fetchSiman(p, raw, say){
+  var code = PART_CODE[p.part.en], w = wantedBooks(raw);
+  var C = ', ' + p.part.en + ' ' + p.siman;
+  var jobs = [], labels = [];
+
+  function add(label, ref){ labels.push(label); jobs.push(sefText(ref)); }
+
+  if(w.tur) add('טור', 'Tur' + C);
+  if(w.by)  add('בית יוסף', 'Beit Yosef' + C);
+  add('שולחן ערוך', 'Shulchan Arukh' + C);
+
+  var list = w.named.length ? w.named : (w.nosei ? NOSEI : []);
+  var i;
+  for(i = 0; i < list.length; i++){
+    if(list[i].parts.indexOf(code) >= 0)
+      add(list[i].he, list[i].en + ' on Shulchan Arukh' + C);
+  }
+
+  if(say) say('מביא מספריא: סימן ' + p.siman + ' ב' + p.part.he + '…');
+
+  return Promise.all(jobs).then(function(res){
+    var out = ['######## ' + p.part.he + ' · סימן ' + p.siman + ' ########'];
+    var got = [], missing = [], n;
+
+    for(n = 0; n < res.length; n++){
+      var segs = res[n], label = labels[n];
+      if(!segs.length){ missing.push(label); continue; }
+      got.push(label);
+      if(label === 'שולחן ערוך'){
+        out.push('');
+        var s;
+        for(s = 0; s < segs.length; s++)
+          out.push('=== שולחן ערוך סעיף ' + hnum(s + 1) + ' ===', segs[s]);
+      } else if(label === 'טור' || label === 'בית יוסף'){
+        out.push('', '=== ' + label + ' ===');
+        out = out.concat(segs);
+      } else {
+        out.push('', '--- ' + label + ' ---');
+        var q;
+        for(q = 0; q < segs.length; q++) out.push('(ס״ק ' + hnum(q + 1) + ') ' + segs[q]);
+      }
+    }
+    if(!got.length) return null;
+    return { text: out.join('\n'),
+             note: 'מקור מלא מספריא · סימן ' + p.siman + ' ב' + p.part.he + ' · ' + got.join(', '),
+             missing: missing };
+  });
+}
+
+function fetchDaf(d, raw, say){
+  if(say) say('מביא מספריא: ' + d.he + ' ' + d.daf + (d.side === 'a' ? ' ע״א' : ' ע״ב') + '…');
+  var jobs = [sefText(d.ref)], labels = ['גמרא'];
+  if(/רש["״]?י/.test(raw) || !/תוספות|תוס["״]/.test(raw)){
+    jobs.push(sefText('Rashi on ' + d.ref)); labels.push('רש״י');
+  }
+  if(/תוספות|תוס["״]/.test(raw)){
+    jobs.push(sefText('Tosafot on ' + d.ref)); labels.push('תוספות');
+  }
+  return Promise.all(jobs).then(function(res){
+    if(!res[0] || !res[0].length) return null;
+    var side = d.side === 'a' ? 'ע״א' : 'ע״ב';
+    var out = ['######## ' + d.he + ' דף ' + d.daf + ' ' + side + ' ########'], got = [], n;
+    for(n = 0; n < res.length; n++){
+      if(!res[n].length) continue;
+      got.push(labels[n]);
+      out.push('', '=== ' + labels[n] + ' ===');
+      out = out.concat(res[n]);
+    }
+    return { text: out.join('\n'),
+             note: 'מקור מלא מספריא · ' + d.he + ' ' + d.daf + ' ' + side + ' · ' + got.join(', '),
+             missing: [] };
+  });
+}
+
+/* קישור לספריא: הופך את ה-URL למראה מקום ומביא דרך הממשק, לא דרך
+   שער קריאה. דף של ספריא בנוי ב-JavaScript, ולכן שער קריאה מחזיר
+   ממנו תפריטים ולא את הלשון. */
+function parseSefLink(u){
+  var m = (u || '').match(/sefaria\.org(?:\.il)?\/([^?#\s]+)/i);
+  if(!m || /^sheets\//i.test(m[1])) return null;
+  return decodeURIComponent(m[1]).replace(/_/g, ' ').replace(/\./g, ' ').trim();
+}
+
+/* השער היחיד: מחזיר חומר מספריא, או null אם אין מראה מקום בבקשה. */
+function sefariaSource(raw, say){
+  var link = parseSefLink(raw);
+  if(link){
+    if(say) say('מביא מספריא: ' + link + '…');
+    return sefText(link).then(function(segs){
+      if(!segs.length) return null;
+      return { text: '######## ' + link + ' ########\n' + segs.join('\n'),
+               note: 'מקור מלא מספריא · ' + link, missing: [] };
+    });
+  }
+  /* בקשה ארוכה שיש בה כבר חומר אינה בקשת מראה מקום. 60 מילים: בקשת
+     מראה מקום היא שורה, וחומר שהודבק הוא פסקאות. בלי הגבול הזה
+     אזכור אגבי של "סימן" בתוך מאמר היה מחליף את החומר שהמשתמש שלח. */
+  if((raw || '').split(/\s+/).length > 60) return Promise.resolve(null);
+
+  var p = parseSiman(raw);
+  if(p) return fetchSiman(p, raw, say);
+  var d = parseDaf(raw);
+  if(d) return fetchDaf(d, raw, say);
+  return Promise.resolve(null);
+}
+
+/* ===================================================================
+   צירוף קובץ, והורדת PDF שבאמת מורידה.   (15/11/26, בקשת המשתמש)
+
+   הכול רץ בדפדפן: אין העלאה לשום שרת, ולכן גם אין תקרת גודל של
+   Apps Script ואין סוד שצריך לשמור. הספריות נטענות מרשת הפצה
+   ציבורית בעת הצורך בלבד — מי שמדביק טקסט לא משלם עליהן כלום.
+   =================================================================== */
+
+var CDN = {
+  pdfjs:   'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs',
+  pdfwork: 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs',
+  mammoth: 'https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.8.0/mammoth.browser.min.js',
+  html2pdf:'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'
+};
+
+var _loaded = {};
+function loadScript(url){
+  if(_loaded[url]) return _loaded[url];
+  _loaded[url] = new Promise(function(res, rej){
+    var s = document.createElement('script');
+    s.src = url; s.onload = function(){ res(true); };
+    s.onerror = function(){ rej(new Error('טעינה נכשלה')); };
+    document.head.appendChild(s);
+  });
+  return _loaded[url];
+}
+
+/* ---------- PDF ---------- */
+/* `window.print()` לבדו אינו הורדה: בטלפון הוא פותח תפריט שיתוף
+   ולעתים לא עושה כלום (נמדד — המשתמש לחץ ולא קיבל קובץ). html2pdf
+   מרנדר את מה שרואים ושומר קובץ. עברית עובדת כי זו תמונה של טקסט
+   שהדפדפן כבר סידר — jsPDF לבדו היה דורש גופן עברי מוטבע.
+   אם רשת ההפצה חסומה — נפילה להדפסה, כדי שתמיד תהיה דרך. */
+function savePdf(title, body, btn){
+  var old = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
+
+  var page = document.createElement('div');
+  page.setAttribute('dir', 'rtl');
+  page.style.cssText = 'width:760px;padding:48px 54px;background:#fff;color:#111;' +
+    'font:15.5px/1.85 "Segoe UI",Arial,sans-serif;direction:rtl;text-align:right';
+  var h = document.createElement('div');
+  h.style.cssText = 'font-size:21px;font-weight:700;margin-bottom:6px;color:#1e3a8a';
+  h.textContent = title || 'עוזר הכתיבה';
+  var sub = document.createElement('div');
+  sub.style.cssText = 'font-size:12px;color:#666;margin-bottom:22px;' +
+    'border-bottom:2px solid #1e3a8a;padding-bottom:10px';
+  sub.textContent = new Date().toLocaleDateString('he-IL') + ' · עוזר הכתיבה';
+  var pre = document.createElement('div');
+  pre.style.cssText = 'white-space:pre-wrap;word-wrap:break-word';
+  pre.textContent = body || '';
+  page.appendChild(h); page.appendChild(sub); page.appendChild(pre);
+
+  var hold = document.createElement('div');
+  hold.style.cssText = 'position:fixed;left:-9999px;top:0';
+  hold.appendChild(page);
+  document.body.appendChild(hold);
+
+  function done(){
+    if(hold.parentNode) hold.parentNode.removeChild(hold);
+    if(btn){ btn.textContent = old; btn.disabled = false; }
+  }
+
+  return loadScript(CDN.html2pdf).then(function(){
+    var name = (title || 'עוזר הכתיבה').replace(/[\\\/:*?"<>|]/g, ' ').substring(0, 60) + '.pdf';
+    return window.html2pdf().set({
+      margin: 0,
+      filename: name,
+      image: { type: 'jpeg', quality: 0.96 },
+      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+      pagebreak: { mode: ['css', 'legacy'] }
+    }).from(page).save().then(done);
+  }).catch(function(){
+    done();
+    window.print();
+  });
+}
+
+/* ---------- קריאת קובץ ---------- */
+
+function readAsText(file){
+  return new Promise(function(res, rej){
+    var r = new FileReader();
+    r.onload = function(){ res(String(r.result || '')); };
+    r.onerror = function(){ rej(new Error('לא הצלחתי לקרוא את הקובץ.')); };
+    r.readAsText(file, 'utf-8');
+  });
+}
+
+function readAsBuffer(file){
+  return new Promise(function(res, rej){
+    var r = new FileReader();
+    r.onload = function(){ res(r.result); };
+    r.onerror = function(){ rej(new Error('לא הצלחתי לקרוא את הקובץ.')); };
+    r.readAsArrayBuffer(file);
+  });
+}
+
+function readAsDataUrl(file){
+  return new Promise(function(res, rej){
+    var r = new FileReader();
+    r.onload = function(){ res(String(r.result || '')); };
+    r.onerror = function(){ rej(new Error('לא הצלחתי לקרוא את הקובץ.')); };
+    r.readAsDataURL(file);
+  });
+}
+
+/* PDF → טקסט. pdf.js הוא מודול ES, ולכן נטען ב-import() ולא בתג
+   script רגיל. אם לא נטען — אומרים את זה במקום להחזיר קובץ ריק. */
+var _pdfjs = null;
+function pdfjsReady(){
+  if(_pdfjs) return _pdfjs;
+  _pdfjs = import(CDN.pdfjs).then(function(m){
+    m.GlobalWorkerOptions.workerSrc = CDN.pdfwork;
+    return m;
+  });
+  return _pdfjs;
+}
+
+function pdfToText(file, say){
+  return Promise.all([pdfjsReady(), readAsBuffer(file)]).then(function(a){
+    var pdfjs = a[0];
+    return pdfjs.getDocument({ data: new Uint8Array(a[1]) }).promise.then(function(doc){
+      var pages = [], n;
+      function one(i){
+        if(i > doc.numPages) return Promise.resolve();
+        if(say) say('קורא עמוד ' + i + ' מתוך ' + doc.numPages + '…');
+        return doc.getPage(i).then(function(pg){
+          return pg.getTextContent().then(function(tc){
+            /* חיבור לפי מיקום אנכי: ללא זה כל מקטע הופך לשורה, ומסמך
+               עברי יוצא רשימת מילים בלי משפטים. */
+            var lines = [], cur = null, last = null, k;
+            for(k = 0; k < tc.items.length; k++){
+              var it = tc.items[k];
+              if(typeof it.str !== 'string') continue;
+              var y = it.transform ? Math.round(it.transform[5]) : 0;
+              if(cur === null || Math.abs(y - last) > 3){
+                if(cur !== null) lines.push(cur);
+                cur = it.str; last = y;
+              } else {
+                cur += (it.str.charAt(0) === ' ' ? '' : ' ') + it.str;
+              }
+            }
+            if(cur !== null) lines.push(cur);
+            pages.push(lines.join('\n').replace(/[ \t]+/g, ' ').trim());
+          });
+        }).then(function(){ return one(i + 1); });
+      }
+      return one(1).then(function(){ return pages.join('\n\n'); });
+    });
+  });
+}
+
+/* Word. mammoth קורא .docx בלבד — .doc הישן הוא פורמט בינארי אחר
+   ואין לו קורא בדפדפן, ולכן אומרים את זה במקום להחזיר ג'יבריש. */
+function docxToText(file){
+  return Promise.all([loadScript(CDN.mammoth), readAsBuffer(file)]).then(function(a){
+    return window.mammoth.extractRawText({ arrayBuffer: a[1] }).then(function(r){
+      return (r && r.value ? r.value : '').replace(/\n{3,}/g, '\n\n').trim();
+    });
+  });
+}
+
+var MAX_FILE = 25 * 1024 * 1024;
+
+/* מחזיר {text} לקובץ טקסטואלי, או {image:{mime,data}} לתמונה/סריקה
+   שצריך לקרוא בעיניים. */
+function extractFile(file, say){
+  var name = (file.name || '').toLowerCase();
+  if(file.size > MAX_FILE)
+    return Promise.reject(new Error('הקובץ גדול מ-25 מגה. אפשר לפצל אותו או להדביק את הטקסט.'));
+
+  if(/\.pdf$/.test(name)){
+    if(say) say('פותח את ה-PDF…');
+    return pdfToText(file, say).then(function(t){
+      /* PDF סרוק מחזיר כמעט אפס טקסט. במקום להחזיר עמוד ריק —
+         מעבירים אותו לקריאה בעיניים, כמו בבוט הטקסטים. */
+      if((t || '').replace(/\s/g, '').length >= 120) return { text: t };
+      if(say) say('זה נראה כמו סריקה. קורא את הדף בעיניים…');
+      return readAsDataUrl(file).then(function(u){
+        return { image: { mime: 'application/pdf', data: u.split(',')[1] },
+                 scanned: true };
+      });
+    });
+  }
+  if(/\.docx$/.test(name)){
+    if(say) say('פותח את מסמך ה-Word…');
+    return docxToText(file).then(function(t){ return { text: t }; });
+  }
+  if(/\.doc$/.test(name))
+    return Promise.reject(new Error('קובץ Word מהפורמט הישן (doc) — נא לשמור אותו כ-docx ולשלוח שוב.'));
+
+  if(/\.(png|jpe?g|webp|gif|bmp|heic)$/.test(name) || /^image\//.test(file.type || '')){
+    if(say) say('קורא את התמונה…');
+    return readAsDataUrl(file).then(function(u){
+      var mime = (file.type || 'image/jpeg');
+      if(mime === 'image/heic') mime = 'image/jpeg';
+      return { image: { mime: mime, data: u.split(',')[1] }, scanned: true };
+    });
+  }
+  if(/\.(txt|md|csv|json|rtf|htm|html|srt|vtt|log)$/.test(name) || /^text\//.test(file.type || '')){
+    return readAsText(file).then(function(t){
+      if(/\.(htm|html)$/.test(name)){
+        t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ')
+             .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+             .replace(/<\/(p|div|h[1-6]|li|tr)>/gi, '\n')
+             .replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, ' ');
+        var d = document.createElement('textarea'); d.innerHTML = t; t = d.value;
+      }
+      return { text: t.replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim() };
+    });
+  }
+  return Promise.reject(new Error('סוג הקובץ לא נתמך. אפשר: PDF, Word (docx), תמונה, או טקסט.'));
+}
+
+
+/* ---------- קובץ מצורף ---------- */
+var PICKED = null;           /* {name, text} או {name, image:{mime,data}} */
+$('pick').onclick = function(){ $('file').click(); };
+$('clrFile').onclick = function(){
+  PICKED = null; $('file').value = '';
+  $('clrFile').classList.add('hide'); note('fileNote','','');
+};
+$('file').onchange = function(){
+  var f = this.files && this.files[0];
+  if(!f) return;
+  note('fileNote','warn','קורא את "' + f.name + '"…');
+  extractFile(f, function(msg){ note('fileNote','warn',msg); })
+  .then(function(r){
+    if(r.image){
+      PICKED = { name:f.name, image:r.image };
+      note('fileNote','ok','צורף: ' + f.name + ' · ייקרא בעיניים (סריקה או תמונה).');
+    } else {
+      var t = (r.text || '').trim();
+      if(!t){ PICKED = null; note('fileNote','bad','הקובץ ריק או שלא הצלחתי לחלץ ממנו טקסט.'); return; }
+      PICKED = { name:f.name, text:t };
+      note('fileNote','ok','צורף: ' + f.name + ' · ' +
+        t.split(/\s+/).length.toLocaleString('he-IL') + ' מילים.');
+    }
+    $('clrFile').classList.remove('hide');
+  })
+  .catch(function(e){
+    PICKED = null; $('file').value = '';
+    note('fileNote','bad',(e && e.message) || 'לא הצלחתי לקרוא את הקובץ.');
+  });
+};
+
+
+/* קריאת דף סרוק או תמונה. רק דגמי גוגל רואים תמונה; מנועי הטקסט
+   החינמיים אינם, ולכן אין להם מקום בשרשרת הזאת. */
+var GEMINI_VISION = ['gemini-3.6-flash','gemini-3.8-flash','gemini-flash-latest',
+                     'gemini-3.5-flash','gemini-3.1-flash-lite'];
+function askGeminiImage(key, system, text, img){
+  var i = 0;
+  function tryOne(){
+    if(i >= GEMINI_VISION.length) return Promise.resolve(null);
+    var m = GEMINI_VISION[i++];
+    return withTimeout(fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/'+m+
+      ':generateContent?key='+encodeURIComponent(key),
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          systemInstruction:{parts:[{text:system}]},
+          contents:[{role:'user',parts:[
+            {inline_data:{mime_type:img.mime, data:img.data}},
+            {text:text}]}],
+          generationConfig:{temperature:0.4,maxOutputTokens:8192}
+        })
+      }).then(function(r){ return r.ok ? r.json() : null; }), 120000)
+    .then(function(d){
+      var parts = d && d.candidates && d.candidates[0] &&
+                  d.candidates[0].content && d.candidates[0].content.parts;
+      var s = '';
+      (parts||[]).forEach(function(p){ s += p.text || ''; });
+      s = s.trim();
+      return s.length > 1 ? {text:s, via:m+' (קריאת דף)'} : tryOne();
+    }).catch(function(){ return tryOne(); });
+  }
+  return tryOne();
+}
+
 /* ---------- הרצה ---------- */
 $('go').onclick = function(){
   var raw = $('txt').value.trim();
-  if(!raw){ note('err','warn','צריך להדביק טקסט או קישור.'); $('txt').focus(); return; }
+  if(!raw && !PICKED){
+    note('err','warn','צריך להדביק טקסט, לצרף קובץ או להדביק קישור.');
+    $('txt').focus(); return; }
   note('err','','');
   var b = $('go');
   b.disabled = true;
@@ -549,7 +1123,7 @@ $('go').onclick = function(){
   $('resultBox').innerHTML = '';
 
   var isLink = /^https?:\/\/\S+$/.test(raw);
-  var ticket = null, usedLink = false;
+  var ticket = null, srcNote = '';
 
   post({api:'ticket', token:S.token, mode:S.mode})
   .then(function(t){
@@ -558,11 +1132,32 @@ $('go').onclick = function(){
       throw new Error(t.error || 'שגיאה');
     }
     ticket = t;
-    if(!isLink) return raw;
-    $('goTxt').innerHTML = '<span class="spin"></span> קורא את הקישור…';
-    return readLink(raw).then(function(t2){
-      if(!t2) throw new Error('לא הצלחתי לקרוא את הדף בקישור. נסה להדביק את הטקסט עצמו.');
-      usedLink = true; return t2;
+    function say(msg){ $('goTxt').innerHTML = '<span class="spin"></span> ' + msg; }
+
+    /* קובץ מצורף קודם לכל: הוא החומר שהמשתמש בחר במפורש. */
+    if(PICKED && PICKED.image){ srcNote = 'מתוך הקובץ ' + PICKED.name; return ''; }
+    if(PICKED && PICKED.text){
+      srcNote = 'מתוך הקובץ ' + PICKED.name;
+      return raw ? (raw + '\n\n' + PICKED.text) : PICKED.text;
+    }
+
+    /* ספריא: מראה מקום ("סימן קפד יורה דעה") או קישור לספריא מביאים
+       את הלשון עצמה, ולא נשענים על זיכרון המודל. זה מה שמונע סיכום
+       על הסימן הלא נכון. */
+    return sefariaSource(raw, say).then(function(s){
+      if(s){
+        srcNote = s.note;
+        if(s.missing && s.missing.length) srcNote += ' · לא נמצא בספריא: ' + s.missing.join(', ');
+        return 'החומר הבא הובא מספריא, והוא לשון המקור עצמה. הסתמך עליו בלבד, ' +
+               'ואל תוסיף תוכן מהזיכרון שלך.\n\n' + s.text +
+               '\n\n--- הבקשה של המשתמש ---\n' + raw;
+      }
+      if(!isLink) return raw;
+      say('קורא את הקישור…');
+      return readLink(raw).then(function(t2){
+        if(!t2) throw new Error('לא הצלחתי לקרוא את הדף בקישור. נסה להדביק את הטקסט עצמו.');
+        srcNote = 'מתוך הקישור שהדבקת'; return t2;
+      });
     });
   })
   .then(function(body){
@@ -570,6 +1165,16 @@ $('go').onclick = function(){
     $('goTxt').innerHTML = '<span class="spin"></span> עובד…';
     var extra = $('extra').value.trim();
     var prompt = extra ? ('הנחיה נוספת מהמשתמש: ' + extra + '\n\n' + body) : body;
+    /* סריקה או תמונה: רק דגמי גוגל קוראים תמונה, ולכן אין כאן נפילה
+       למנועי הטקסט — תשובה שנכתבה בלי לראות את הדף היא המצאה. */
+    if(PICKED && PICKED.image){
+      if(!ticket.key) throw new Error(
+        'קריאת קובץ סרוק או תמונה דורשת שהמנהל יגדיר מפתח. אפשר להדביק את הטקסט עצמו.');
+      var ask = (raw ? raw + '\n\n' : '') +
+        'קרא את הדף המצורף במלואו ובצע עליו את המשימה.';
+      return askGeminiImage(ticket.key, ticket.system,
+        (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + ask, PICKED.image);
+    }
     return ticket.key
       ? askGemini(ticket.key, ticket.system, prompt).then(function(r){
           return r || askFree(ticket.system, prompt); })
@@ -583,7 +1188,7 @@ $('go').onclick = function(){
     }
     call({api:'done', token:S.token, mode:ticket.mode, via:r.via});
     r.mode = ticket.mode;
-    r.source = usedLink ? 'מתוך הקישור שהדבקת' : '';
+    r.source = srcNote;
     S.last = r.text;
     var m = S.modes.filter(function(x){ return x.key===r.mode; })[0] || {label:''};
     $('resultBox').innerHTML =
@@ -592,7 +1197,8 @@ $('go').onclick = function(){
       (r.source ? '<span>'+esc(r.source)+'</span>' : '') +
       '<span class="spacer" style="flex:1"></span>' +
       '<button class="mini" id="cp">העתק</button>' +
-      '<button class="mini" id="pdf">שמור כ-PDF</button>' +
+      '<button class="mini" id="pdf">הורד PDF</button>' +
+      '<button class="mini" id="bad">⚠️ לא נכון</button>' +
       '</div><div class="out" id="outTxt"></div></div>';
     $('outTxt').textContent = r.text;
     $('cp').onclick = function(){
@@ -601,7 +1207,19 @@ $('go').onclick = function(){
         setTimeout(function(){ $('cp').textContent='העתק'; }, 1600);
       });
     };
-    $('pdf').onclick = function(){ window.print(); };
+    $('pdf').onclick = function(){ savePdf(m.label, S.last, $('pdf')); };
+    /* דיווח על תשובה שגויה. זה מה שהופך טעות של המודל לדבר שאפשר
+       לראות ולתקן — עד עכשיו היא פשוט נעלמה אצל המשתמש. */
+    $('bad').onclick = function(){
+      var why = prompt('מה לא נכון בתשובה? (שורה אחת, לא חובה)') || '';
+      if(why === null) return;
+      $('bad').textContent = 'שולח…'; $('bad').disabled = true;
+      call({ api:'report', token:S.token, mode:r.mode, via:r.via,
+             why:why, ask:(raw || '(קובץ מצורף)'), got:S.last });
+      setTimeout(function(){
+        $('bad').textContent = 'דווח ✓'; $('bad').disabled = true;
+      }, 500);
+    };
     $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
   })
   .catch(function(e){
@@ -768,6 +1386,37 @@ function drawAdmin(r){
     '<div class="field"><label for="aKey">מפתח Gemini (מתחיל ב-AIza)</label>' +
     '<input type="text" id="aKey" placeholder="הדבק כאן, או השאר ריק כדי למחוק" autocomplete="off"></div>' +
     '<button class="btn sec" id="aSaveKey">שמור מפתח</button></div>';
+
+  /* דיווחים על תשובות שגויות. מוצגים לפני היומן בכוונה: זה הדבר
+     היחיד בלוח שדורש פעולה, והיומן הוא רקע. */
+  var reps = (r.reports || []), openReps = reps.filter(function(x){ return !x.fixed; });
+  h += '<div class="card"><h2>⚠️ דיווחים על תשובות שגויות</h2>' +
+       '<p class="lead">' + (reps.length
+         ? (openReps.length + ' פתוחים מתוך ' + reps.length +
+            '. כל דיווח כולל את הבקשה ואת תחילת התשובה, כדי שאפשר יהיה לתקן.')
+         : 'אין דיווחים. הכפתור "⚠️ לא נכון" שבתוצאה שולח לכאן.') + '</p>';
+  if(reps.length){
+    h += '<div class="scroll">';
+    reps.slice(0, 15).forEach(function(x){
+      var d = new Date(x.t);
+      h += '<div class="note ' + (x.fixed ? 'ok' : 'bad') + '" style="margin-bottom:8px">' +
+           '<b>' + esc(x.mode || '') + '</b> · ' + esc(x.who || '') + ' · ' +
+           d.toLocaleDateString('he-IL') + ' ' +
+           d.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'}) +
+           (x.via ? ' · ' + esc(x.via) : '') +
+           (x.fixed ? ' · טופל ✓' : '') +
+           (x.why ? '<br>הערה: ' + esc(x.why) : '') +
+           '<br><span style="color:var(--muted);font-size:12.5px">ביקש: ' +
+           esc((x.ask||'').substring(0,140)) + '</span>' +
+           '<br><span style="color:var(--muted);font-size:12.5px">קיבל: ' +
+           esc((x.got||'').substring(0,180)) + '</span>' +
+           (x.fixed ? '' : '<br><button class="mini" data-op="fixed" data-n="' +
+                            esc(String(x.n)) + '">סמן כטופל</button>') +
+           '</div>';
+    });
+    h += '</div><button class="btn sec" data-op="clearReports">נקה את כל הדיווחים</button>';
+  }
+  h += '</div>';
 
   h += '<div class="card"><h2>יומן אחרון</h2><div class="scroll"><table>';
   (r.log||[]).slice(0,25).forEach(function(l){
