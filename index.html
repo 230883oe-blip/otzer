@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#4f46e5">
+<title>עוזר הכתיבה</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ========= מערכת העיצוב =========
+   עקרונות: סולם מרווחים אחיד, צבע אחד דומיננטי + נייטרלים, פינות עגולות
+   עקביות, צללים רכים בשתי שכבות, ומעברים של 180ms על כל אינטראקציה.
+   מצב כהה אוטומטי לפי העדפת המכשיר.                                      */
+:root{
+  --brand:#4f46e5; --brand-2:#7c3aed; --brand-soft:#eef2ff;
+  --bg:#f6f7fb; --card:#ffffff; --ink:#111827; --muted:#6b7280;
+  --line:#e5e7eb; --ok:#059669; --warn:#d97706; --bad:#dc2626;
+  --r:18px; --r-sm:12px;
+  --sh:0 1px 2px rgba(16,24,40,.04), 0 8px 24px rgba(16,24,40,.07);
+  --sh-lg:0 2px 4px rgba(16,24,40,.05), 0 20px 48px rgba(16,24,40,.12);
+}
+@media (prefers-color-scheme: dark){
+  :root{ --bg:#0f1117; --card:#171a23; --ink:#e8eaf0; --muted:#9aa2b1;
+         --line:#272b36; --brand-soft:#1e2130;
+         --sh:0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.35);
+         --sh-lg:0 2px 4px rgba(0,0,0,.35), 0 20px 48px rgba(0,0,0,.5); }
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  font-family:'Heebo',system-ui,-apple-system,'Segoe UI',Arial,sans-serif;
+  background:var(--bg); color:var(--ink); line-height:1.65;
+  -webkit-font-smoothing:antialiased; min-height:100vh;
+}
+body::before{
+  content:''; position:fixed; inset:0; z-index:-1; pointer-events:none;
+  background:
+    radial-gradient(900px 500px at 85% -5%, rgba(124,58,237,.16), transparent 60%),
+    radial-gradient(700px 450px at 5% 0%, rgba(79,70,229,.14), transparent 60%);
+}
+.wrap{max-width:900px;margin:0 auto;padding:0 16px 64px}
+
+/* ---- כותרת ---- */
+header{padding:26px 0 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.logo{
+  width:50px;height:50px;border-radius:15px;flex:none;
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));
+  display:grid;place-items:center;font-size:25px;
+  box-shadow:0 8px 20px rgba(79,70,229,.35);
+}
+h1{font-size:25px;font-weight:800;margin:0;letter-spacing:-.4px}
+.sub{color:var(--muted);font-size:14px;margin-top:1px}
+.spacer{flex:1}
+.ghost{
+  background:transparent;border:1px solid var(--line);color:var(--muted);
+  padding:8px 14px;border-radius:999px;font:inherit;font-size:13.5px;
+  cursor:pointer;transition:all .18s;
+}
+.ghost:hover{border-color:var(--brand);color:var(--brand);background:var(--brand-soft)}
+
+/* ---- כרטיס ---- */
+.card{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:24px;box-shadow:var(--sh);margin-bottom:18px;
+}
+.card h2{font-size:18px;margin:0 0 6px;font-weight:700}
+.card p.lead{color:var(--muted);margin:0 0 18px;font-size:14.5px}
+
+/* ---- שדות ---- */
+label{display:block;font-size:13.5px;font-weight:600;margin:0 0 7px;color:var(--ink)}
+input[type=text],input[type=password],textarea,select{
+  width:100%;padding:13px 15px;border:1.5px solid var(--line);
+  border-radius:var(--r-sm);font:inherit;font-size:15.5px;
+  background:var(--bg);color:var(--ink);transition:all .18s;
+}
+input:focus,textarea:focus,select:focus{
+  outline:none;border-color:var(--brand);background:var(--card);
+  box-shadow:0 0 0 4px rgba(79,70,229,.13);
+}
+textarea{resize:vertical;min-height:170px;line-height:1.7}
+.field{margin-bottom:16px}
+.hint{font-size:12.5px;color:var(--muted);margin-top:6px}
+
+/* ---- כפתורים ---- */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  background:linear-gradient(135deg,var(--brand),var(--brand-2));color:#fff;
+  border:0;padding:14px 26px;border-radius:999px;font:inherit;
+  font-size:16px;font-weight:600;cursor:pointer;transition:all .18s;
+  box-shadow:0 6px 18px rgba(79,70,229,.32);
+}
+.btn:hover{transform:translateY(-1px);box-shadow:0 10px 26px rgba(79,70,229,.42)}
+.btn:active{transform:translateY(0)}
+.btn[disabled]{opacity:.55;cursor:not-allowed;transform:none;box-shadow:none}
+.btn.sec{
+  background:var(--card);color:var(--ink);border:1.5px solid var(--line);
+  box-shadow:none;font-size:14px;padding:10px 18px;
+}
+.btn.sec:hover{border-color:var(--brand);color:var(--brand);transform:none;box-shadow:none}
+.btn.wide{width:100%}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+
+/* ---- בוחר המצבים ---- */
+.modes{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.mode{
+  background:var(--bg);border:1.5px solid var(--line);border-radius:var(--r-sm);
+  padding:13px 12px;cursor:pointer;transition:all .18s;text-align:center;
+  display:flex;flex-direction:column;align-items:center;gap:5px;
+}
+.mode:hover{border-color:var(--brand);transform:translateY(-2px);box-shadow:var(--sh)}
+.mode .ic{font-size:22px;line-height:1}
+.mode .nm{font-size:13.5px;font-weight:600}
+.mode.on{
+  border-color:var(--brand);background:var(--brand-soft);
+  box-shadow:0 0 0 3px rgba(79,70,229,.14);
+}
+@media (prefers-color-scheme: dark){ .mode.on .nm{color:#c7d2fe} }
+
+/* ---- תוצאה ---- */
+.result{
+  background:var(--card);border:1px solid var(--line);border-radius:var(--r);
+  padding:24px;box-shadow:var(--sh-lg);margin-bottom:18px;
+}
+.out{
+  white-space:pre-wrap;word-wrap:break-word;font-size:16px;line-height:1.85;
+  border-top:1px solid var(--line);padding-top:18px;margin-top:14px;
+}
+.meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12.5px;color:var(--muted)}
+.pill{
+  background:var(--brand-soft);color:var(--brand);padding:4px 11px;
+  border-radius:999px;font-size:12px;font-weight:600;
+}
+@media (prefers-color-scheme: dark){ .pill{color:#a5b4fc} }
+
+/* ---- מצבים ---- */
+.note{
+  border-radius:var(--r-sm);padding:14px 16px;font-size:14.5px;margin-bottom:16px;
+  border:1px solid var(--line);background:var(--bg);
+}
+.note.ok{border-color:rgba(5,150,105,.35);background:rgba(5,150,105,.09);color:var(--ok)}
+.note.warn{border-color:rgba(217,119,6,.35);background:rgba(217,119,6,.09);color:var(--warn)}
+.note.bad{border-color:rgba(220,38,38,.35);background:rgba(220,38,38,.09);color:var(--bad)}
+
+.spin{
+  width:17px;height:17px;border:2.5px solid rgba(255,255,255,.35);
+  border-top-color:#fff;border-radius:50%;animation:sp .7s linear infinite;
+}
+@keyframes sp{to{transform:rotate(360deg)}}
+.wait{text-align:center;padding:46px 20px}
+.wait .big{font-size:52px;margin-bottom:10px;animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.6;transform:scale(.95)}}
+
+/* ---- טבלת הניהול ---- */
+table{width:100%;border-collapse:collapse;font-size:14px}
+th,td{padding:10px 8px;text-align:right;border-bottom:1px solid var(--line)}
+th{font-weight:600;color:var(--muted);font-size:12.5px}
+.tag{padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.tag.approved{background:rgba(5,150,105,.14);color:var(--ok)}
+.tag.pending{background:rgba(217,119,6,.14);color:var(--warn)}
+.tag.blocked{background:rgba(220,38,38,.14);color:var(--bad)}
+.mini{
+  padding:5px 11px;font-size:12.5px;border-radius:999px;border:1px solid var(--line);
+  background:var(--card);color:var(--ink);cursor:pointer;font:inherit;font-size:12.5px;
+  transition:all .15s;
+}
+.mini:hover{border-color:var(--brand);color:var(--brand)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:10px;margin-bottom:18px}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px;text-align:center}
+.stat b{display:block;font-size:26px;font-weight:800;line-height:1.2}
+.stat span{font-size:12.5px;color:var(--muted)}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.hide{display:none !important}
+footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px}
+
+@media (max-width:600px){
+  h1{font-size:21px} .card,.result{padding:18px}
+  .modes{grid-template-columns:repeat(auto-fill,minmax(110px,1fr))}
+  .btn{width:100%}
+}
+@media print{
+  body::before,header,.card,.meta,footer,.noprint{display:none !important}
+  .result{box-shadow:none;border:0;padding:0}
+  .out{border:0;font-size:12pt}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">✍️</div>
+    <div>
+      <h1>עוזר הכתיבה</h1>
+      <div class="sub">ניסוח · הגהה · סיכום · תרגום · חומרי לימוד</div>
+    </div>
+    <div class="spacer"></div>
+    <button class="ghost" id="adminBtn">אזור ניהול</button>
+  </header>
+
+  <div id="notice"></div>
+
+  <!-- ========== הרשמה ========== -->
+  <section id="viewJoin" class="card hide">
+    <h2>ברוך הבא 👋</h2>
+    <p class="lead">כדי להשתמש באפליקציה צריך אישור כניסה חד-פעמי. מלא את הפרטים, ותקבל גישה ברגע שהמנהל יאשר.</p>
+    <div class="field">
+      <label for="jName">השם שלך</label>
+      <input type="text" id="jName" placeholder="לדוגמה: ישראל ישראלי" autocomplete="name">
+    </div>
+    <div class="field">
+      <label for="jNote">מי אתה? (לא חובה)</label>
+      <input type="text" id="jNote" placeholder="מורה בבית ספר, מכיר דרך…">
+      <div class="hint">זה עוזר למנהל לזהות אותך ולאשר מהר.</div>
+    </div>
+    <div class="field">
+      <label for="jCode">קוד כניסה (אם קיבלת)</label>
+      <input type="text" id="jCode" placeholder="6 אותיות וספרות" autocomplete="off" style="letter-spacing:3px;text-transform:uppercase">
+      <div class="hint">מי שקיבל קוד מהמנהל נכנס מיד, בלי להמתין לאישור.</div>
+    </div>
+    <button class="btn wide" id="joinBtn">בקש גישה</button>
+    <div id="jErr"></div>
+  </section>
+
+  <!-- ========== ממתין לאישור ========== -->
+  <section id="viewWait" class="card hide">
+    <div class="wait">
+      <div class="big">⏳</div>
+      <h2>הבקשה נשלחה</h2>
+      <p class="lead" id="waitName" style="margin-bottom:22px"></p>
+      <button class="btn sec" id="recheck">בדוק אם אושרתי</button>
+    </div>
+  </section>
+
+  <!-- ========== המסך הראשי ========== -->
+  <section id="viewApp" class="hide">
+    <div class="card">
+      <h2>מה נעשה היום?</h2>
+      <p class="lead">בחר פעולה, הדבק את הטקסט, ולחץ הפעל.</p>
+      <div class="modes" id="modes"></div>
+    </div>
+
+    <div class="card">
+      <div class="field">
+        <label for="txt" id="txtLabel">הטקסט</label>
+        <textarea id="txt" placeholder="הדבק כאן את הטקסט… אפשר גם להדביק קישור לכתבה או לדף אינטרנט, ואקרא אותו בעצמי."></textarea>
+        <div class="hint" id="modeHint"></div>
+      </div>
+      <div class="field">
+        <label for="extra">הנחיה נוספת (לא חובה)</label>
+        <input type="text" id="extra" placeholder="למשל: בקצרה · בהרחבה · לתלמידי כיתה ז · בטון רשמי">
+      </div>
+      <button class="btn wide" id="go"><span id="goTxt">הפעל</span></button>
+      <div id="err"></div>
+    </div>
+
+    <!-- כלים מהירים: רצים בדפדפן בלבד. בלי שרת, בלי מכסה, מיידי. -->
+    <div class="card">
+      <h2>🧰 כלים מהירים</h2>
+      <p class="lead">פועלים מיד על הטקסט שלמעלה, כאן במכשיר שלך — בלי לשלוח לשום מקום ובלי להמתין.</p>
+      <div class="row" id="tools">
+        <button class="btn sec" data-t="count">ספירה</button>
+        <button class="btn sec" data-t="clean">ניקוי רווחים</button>
+        <button class="btn sec" data-t="blank">הסרת שורות ריקות</button>
+        <button class="btn sec" data-t="nikud">הסרת ניקוד</button>
+        <button class="btn sec" data-t="md">הסרת סימני עיצוב</button>
+        <button class="btn sec" data-t="num">מספור שורות</button>
+        <button class="btn sec" data-t="dedupe">מחיקת שורות כפולות</button>
+        <button class="btn sec" data-t="undo">בטל</button>
+      </div>
+      <div id="toolOut"></div>
+    </div>
+
+    <div id="resultBox"></div>
+  </section>
+
+  <!-- ========== ניהול ========== -->
+  <section id="viewAdmin" class="hide">
+    <div class="card" id="adminGate">
+      <h2>אזור ניהול</h2>
+      <p class="lead">הזן את קוד המנהל.</p>
+      <div class="field">
+        <input type="password" id="aCode" placeholder="קוד מנהל" inputmode="numeric" autocomplete="off">
+      </div>
+      <div class="row">
+        <button class="btn" id="aIn">כניסה</button>
+        <button class="btn sec" id="aBack">חזרה</button>
+      </div>
+      <div id="aErr"></div>
+    </div>
+    <div id="adminPanel" class="hide"></div>
+  </section>
+
+  <footer>עוזר הכתיבה · פועל בענן · <span id="buildTag"></span></footer>
+</div>
+
+<script>
+/* ===== כתובת ה-API. build_static.py מזריק את הערך האמיתי. ===== */
+var API = "https://script.google.com/macros/s/AKfycbz4DTd-BRG9rPLzwojz27x1EXZSch9STuepTzyQw0AT5a5ths_-Q3K2mKkJB7giOaWAzw/exec";
+
+var S = { token:null, user:null, modes:[], mode:'nisuach', admin:null, last:null };
+
+function $(id){ return document.getElementById(id); }
+function show(id){
+  ['viewJoin','viewWait','viewApp','viewAdmin'].forEach(function(v){
+    $(v).classList.toggle('hide', v !== id);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"']/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function note(el, kind, msg){
+  $(el).innerHTML = msg ? '<div class="note '+kind+'">'+esc(msg)+'</div>' : '';
+}
+
+/* קריאה ל-API. GET עם פרמטרים — עובד בלי preflight ובלי CORS מורכב. */
+function call(params){
+  var q = Object.keys(params).map(function(k){
+    return encodeURIComponent(k)+'='+encodeURIComponent(params[k]==null?'':params[k]);
+  }).join('&');
+  return fetch(API + '?' + q, {method:'GET'})
+    .then(function(r){ return r.json(); })
+    .catch(function(){ return {ok:false, error:'אין חיבור לשרת. בדוק את האינטרנט ונסה שוב.'}; });
+}
+/* טקסט ארוך לא נכנס בכתובת — לכן הרצה נשלחת ב-POST. */
+function post(body){
+  return fetch(API, {method:'POST', body:JSON.stringify(body)})
+    .then(function(r){ return r.json(); })
+    .catch(function(){ return {ok:false, error:'אין חיבור לשרת. בדוק את האינטרנט ונסה שוב.'}; });
+}
+
+/* ---------- אתחול ---------- */
+function boot(){
+  S.token = localStorage.getItem('ta_token');
+  call({api:'ping'}).then(function(r){
+    if(r && r.modes){ S.modes = r.modes; drawModes(); }
+    if(r && r.build) $('buildTag').textContent = 'גרסה ' + r.build;
+    if(r && r.notice) note('notice','ok', r.notice);
+    if(!S.token){ show('viewJoin'); return; }
+    refreshMe();
+  });
+}
+
+function refreshMe(){
+  call({api:'me', token:S.token}).then(function(r){
+    if(!r.ok){
+      localStorage.removeItem('ta_token'); S.token=null; show('viewJoin'); return;
+    }
+    S.user = r.user;
+    if(r.settings && r.settings.notice) note('notice','ok', r.settings.notice);
+    if(S.user.status === 'approved'){ show('viewApp'); }
+    else if(S.user.status === 'blocked'){
+      show('viewWait');
+      $('viewWait').querySelector('.big').textContent = '🚫';
+      $('viewWait').querySelector('h2').textContent = 'הגישה נחסמה';
+      $('waitName').textContent = 'פנה למנהל האפליקציה.';
+      $('recheck').classList.add('hide');
+    } else {
+      show('viewWait');
+      $('waitName').textContent = 'שלום ' + S.user.name +
+        ', הבקשה שלך ממתינה לאישור המנהל. ברגע שתאושר — כל האפשרויות ייפתחו.';
+    }
+  });
+}
+
+/* ---------- הרשמה ---------- */
+$('joinBtn').onclick = function(){
+  var name = $('jName').value.trim();
+  if(name.length < 2){ note('jErr','warn','צריך לכתוב שם.'); $('jName').focus(); return; }
+  note('jErr','','');
+  var b = this; b.disabled = true; b.textContent = 'שולח…';
+  call({api:'join', name:name, note:$('jNote').value.trim(),
+        code:$('jCode').value.trim().toUpperCase()}).then(function(r){
+    b.disabled = false; b.textContent = 'בקש גישה';
+    if(!r.ok){ note('jErr','bad', r.error || 'שגיאה'); return; }
+    S.token = r.user.token; S.user = r.user;
+    localStorage.setItem('ta_token', S.token);
+    refreshMe();
+  });
+};
+$('recheck').onclick = function(){
+  var b=this; b.disabled=true; b.textContent='בודק…';
+  refreshMe();
+  setTimeout(function(){ b.disabled=false; b.textContent='בדוק אם אושרתי'; }, 900);
+};
+
+/* ---------- מצבים ---------- */
+function drawModes(){
+  var h = '';
+  S.modes.forEach(function(m){
+    h += '<div class="mode'+(m.key===S.mode?' on':'')+'" data-k="'+m.key+'">' +
+         '<div class="ic">'+m.icon+'</div><div class="nm">'+esc(m.label)+'</div></div>';
+  });
+  $('modes').innerHTML = h;
+  Array.prototype.forEach.call($('modes').children, function(el){
+    el.onclick = function(){ setMode(el.getAttribute('data-k')); };
+  });
+  setMode(S.mode);
+}
+function setMode(k){
+  S.mode = k;
+  Array.prototype.forEach.call($('modes').children, function(el){
+    el.classList.toggle('on', el.getAttribute('data-k')===k);
+  });
+  var m = S.modes.filter(function(x){ return x.key===k; })[0];
+  if(m){
+    $('modeHint').textContent = m.hint;
+    $('txtLabel').textContent = m.icon + ' ' + m.label;
+  }
+}
+
+/* ===================================================================
+   מנוע התשובות — רץ כאן, בדפדפן של המשתמש.
+   זה מה שמבטל את תקרת הפעולות: כל משתמש פונה מהמכשיר ומכתובת ה-IP
+   שלו, ולכן אין מכסה מרכזית אחת שנגמרת לכולם יחד.
+   המנועים נבדקו בפועל (15/11/26) ועונים לפנייה ישירה מדפדפן.
+   =================================================================== */
+var ENGINES = [
+  { name:'pollinations', url:'https://text.pollinations.ai/openai', model:'openai' },
+  { name:'pollinations-fast', url:'https://text.pollinations.ai/openai', model:'openai-fast' },
+  { name:'llm7-minimax', url:'https://api.llm7.io/v1/chat/completions',
+    model:'minimax-m2.7', auth:'Bearer unused' },
+  { name:'llm7-codestral', url:'https://api.llm7.io/v1/chat/completions',
+    model:'codestral-latest', auth:'Bearer unused' }
+];
+/* דגמי גוגל, אם המנהל הגדיר מפתח. המכסה היומית היא לכל דגם בנפרד,
+   ולכן רשימה ארוכה היא כמה מכסות ולא אחת. */
+var GEMINI_MODELS = ['gemini-3.1-flash-lite','gemini-3.8-flash','gemini-3.6-flash',
+                     'gemini-flash-latest','gemini-3.5-flash'];
+
+function withTimeout(p, ms){
+  return new Promise(function(res, rej){
+    var done = false;
+    var t = setTimeout(function(){ if(!done){ done=true; rej(new Error('timeout')); } }, ms);
+    p.then(function(v){ if(!done){ done=true; clearTimeout(t); res(v); } },
+           function(e){ if(!done){ done=true; clearTimeout(t); rej(e); } });
+  });
+}
+
+function askGemini(key, system, text){
+  var i = 0;
+  function tryOne(){
+    if(i >= GEMINI_MODELS.length) return Promise.resolve(null);
+    var m = GEMINI_MODELS[i++];
+    return withTimeout(fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models/'+m+
+      ':generateContent?key='+encodeURIComponent(key),
+      { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          systemInstruction:{parts:[{text:system}]},
+          contents:[{role:'user',parts:[{text:text}]}],
+          generationConfig:{temperature:0.7,maxOutputTokens:8192}
+        })
+      }).then(function(r){ return r.ok ? r.json() : null; }), 70000)
+    .then(function(d){
+      var parts = d && d.candidates && d.candidates[0] &&
+                  d.candidates[0].content && d.candidates[0].content.parts;
+      var s = '';
+      (parts||[]).forEach(function(p){ s += p.text || ''; });
+      s = s.trim();
+      return s.length > 1 ? {text:s, via:m} : tryOne();
+    }).catch(function(){ return tryOne(); });
+  }
+  return tryOne();
+}
+
+function askFree(system, text){
+  var i = 0;
+  function tryOne(){
+    if(i >= ENGINES.length) return Promise.resolve(null);
+    var g = ENGINES[i++];
+    var h = {'Content-Type':'application/json'};
+    if(g.auth) h['Authorization'] = g.auth;
+    return withTimeout(fetch(g.url, {
+      method:'POST', headers:h,
+      body: JSON.stringify({ model:g.model, messages:[
+        {role:'system',content:system},{role:'user',content:text}]})
+    }).then(function(r){ return r.ok ? r.json() : null; }), 90000)
+    .then(function(d){
+      var ch = d && d.choices && d.choices[0];
+      var s = (ch && ch.message && ch.message.content) || (ch && ch.text) || '';
+      if(typeof s !== 'string') s = '';
+      s = s.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
+      return s.length > 1 ? {text:s, via:g.name} : tryOne();
+    }).catch(function(){ return tryOne(); });
+  }
+  return tryOne();
+}
+
+/* קריאת דף אינטרנט מהדפדפן. אתר זר חוסם פנייה ישירה (CORS), ולכן
+   עוברים דרך שער קריאה ציבורי. שניים, כדי שאחד שנפל לא יעצור. */
+function readLink(url){
+  var proxies = [
+    'https://r.jina.ai/' + url,
+    'https://api.allorigins.win/raw?url=' + encodeURIComponent(url)
+  ];
+  var i = 0;
+  function tryOne(){
+    if(i >= proxies.length) return Promise.resolve('');
+    var p = proxies[i++];
+    return withTimeout(fetch(p).then(function(r){ return r.ok ? r.text() : ''; }), 45000)
+      .then(function(t){
+        if(!t) return tryOne();
+        if(/<\/?[a-z][\s\S]*>/i.test(t)){
+          t = t.replace(/<script[\s\S]*?<\/script>/gi,' ')
+               .replace(/<style[\s\S]*?<\/style>/gi,' ')
+               .replace(/<\/(p|div|h[1-6]|li|tr)>/gi,'\n')
+               .replace(/<br\s*\/?>/gi,'\n').replace(/<[^>]+>/g,' ');
+          var d = document.createElement('textarea'); d.innerHTML = t; t = d.value;
+        }
+        t = t.replace(/[ \t]+/g,' ').replace(/\n[ \t]*\n[\s\n]*/g,'\n\n').trim();
+        return t.length > 200 ? t.substring(0,40000) : tryOne();
+      }).catch(function(){ return tryOne(); });
+  }
+  return tryOne();
+}
+
+/* ---------- הרצה ---------- */
+$('go').onclick = function(){
+  var raw = $('txt').value.trim();
+  if(!raw){ note('err','warn','צריך להדביק טקסט או קישור.'); $('txt').focus(); return; }
+  note('err','','');
+  var b = $('go');
+  b.disabled = true;
+  $('goTxt').innerHTML = '<span class="spin"></span> עובד…';
+  $('resultBox').innerHTML = '';
+
+  var isLink = /^https?:\/\/\S+$/.test(raw);
+  var ticket = null, usedLink = false;
+
+  post({api:'ticket', token:S.token, mode:S.mode})
+  .then(function(t){
+    if(!t.ok){
+      if(t.status==='pending' || t.status==='blocked' || t.status==='none'){ refreshMe(); return null; }
+      throw new Error(t.error || 'שגיאה');
+    }
+    ticket = t;
+    if(!isLink) return raw;
+    $('goTxt').innerHTML = '<span class="spin"></span> קורא את הקישור…';
+    return readLink(raw).then(function(t2){
+      if(!t2) throw new Error('לא הצלחתי לקרוא את הדף בקישור. נסה להדביק את הטקסט עצמו.');
+      usedLink = true; return t2;
+    });
+  })
+  .then(function(body){
+    if(body === null) return null;
+    $('goTxt').innerHTML = '<span class="spin"></span> עובד…';
+    var extra = $('extra').value.trim();
+    var prompt = extra ? ('הנחיה נוספת מהמשתמש: ' + extra + '\n\n' + body) : body;
+    return ticket.key
+      ? askGemini(ticket.key, ticket.system, prompt).then(function(r){
+          return r || askFree(ticket.system, prompt); })
+      : askFree(ticket.system, prompt);
+  })
+  .then(function(r){
+    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    if(r === null) return;
+    if(!r || !r.text){
+      note('err','bad','כל המנועים עמוסים כרגע. נסה שוב בעוד דקה.'); return;
+    }
+    call({api:'done', token:S.token, mode:ticket.mode, via:r.via});
+    r.mode = ticket.mode;
+    r.source = usedLink ? 'מתוך הקישור שהדבקת' : '';
+    S.last = r.text;
+    var m = S.modes.filter(function(x){ return x.key===r.mode; })[0] || {label:''};
+    $('resultBox').innerHTML =
+      '<div class="result"><div class="meta noprint">' +
+      '<span class="pill">'+esc(m.label)+'</span>' +
+      (r.source ? '<span>'+esc(r.source)+'</span>' : '') +
+      '<span class="spacer" style="flex:1"></span>' +
+      '<button class="mini" id="cp">העתק</button>' +
+      '<button class="mini" id="pdf">שמור כ-PDF</button>' +
+      '</div><div class="out" id="outTxt"></div></div>';
+    $('outTxt').textContent = r.text;
+    $('cp').onclick = function(){
+      navigator.clipboard.writeText(S.last).then(function(){
+        $('cp').textContent = 'הועתק ✓';
+        setTimeout(function(){ $('cp').textContent='העתק'; }, 1600);
+      });
+    };
+    $('pdf').onclick = function(){ window.print(); };
+    $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+  })
+  .catch(function(e){
+    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    note('err','bad', (e && e.message) || 'שגיאה לא צפויה.');
+  });
+};
+
+/* ---------- כלים מקומיים (בדפדפן, בלי שרת ובלי מכסה) ---------- */
+var UNDO = null;
+function applyTool(name){
+  var ta = $('txt'), t = ta.value;
+  if(name === 'undo'){
+    if(UNDO === null){ note('toolOut','warn','אין מה לבטל.'); return; }
+    ta.value = UNDO; UNDO = null; note('toolOut','ok','הוחזר המצב הקודם.'); return;
+  }
+  if(!t.trim()){ note('toolOut','warn','אין טקסט למעלה.'); return; }
+
+  if(name === 'count'){
+    var words = t.trim().split(/\s+/).filter(Boolean).length;
+    var lines = t.split(/\n/).length;
+    var chars = t.length;
+    var noSpace = t.replace(/\s/g,'').length;
+    var paras = t.split(/\n\s*\n/).filter(function(x){return x.trim();}).length;
+    var mins = Math.max(1, Math.round(words/180));
+    note('toolOut','ok',
+      words+' מילים · '+chars+' תווים ('+noSpace+' בלי רווחים) · '+
+      lines+' שורות · '+paras+' פסקאות · קריאה בקול בערך '+mins+' דקות');
+    return;
+  }
+
+  UNDO = t;
+  var r = t;
+  if(name === 'clean'){
+    r = t.replace(/[ \t ]+/g,' ').replace(/ *\n */g,'\n').replace(/\n{3,}/g,'\n\n').trim();
+  } else if(name === 'blank'){
+    r = t.split(/\n/).filter(function(l){ return l.trim(); }).join('\n');
+  } else if(name === 'nikud'){
+    r = t.replace(/[֑-ׇ]/g,'');
+  } else if(name === 'md'){
+    r = t.replace(/^#{1,6}\s*/gm,'').replace(/\*\*([\s\S]*?)\*\*/g,'$1')
+         .replace(/\*([^*\n]+)\*/g,'$1').replace(/^\s*[-*+]\s+/gm,'• ')
+         .replace(/`{1,3}/g,'').replace(/^\s*>\s?/gm,'');
+  } else if(name === 'num'){
+    var i = 0;
+    r = t.split(/\n/).map(function(l){
+      if(!l.trim()) return l;
+      i++; return i + '. ' + l.replace(/^\s*\d+[.)]\s*/,'');
+    }).join('\n');
+  } else if(name === 'dedupe'){
+    var seen = {}, keep = [];
+    t.split(/\n/).forEach(function(l){
+      var k = l.trim();
+      if(!k){ keep.push(l); return; }
+      if(seen[k]) return;
+      seen[k] = 1; keep.push(l);
+    });
+    r = keep.join('\n');
+  }
+  $('txt').value = r;
+  note('toolOut','ok','בוצע. אפשר לבטל בכפתור "בטל".');
+}
+Array.prototype.forEach.call($('tools').children, function(b){
+  b.onclick = function(){ applyTool(b.getAttribute('data-t')); };
+});
+
+/* ---------- ניהול ---------- */
+$('adminBtn').onclick = function(){ show('viewAdmin'); $('aCode').focus(); };
+$('aBack').onclick = function(){ refreshMe(); };
+$('aCode').onkeydown = function(e){ if(e.key==='Enter') $('aIn').click(); };
+$('aIn').onclick = function(){ adminCall({op:'list'}); };
+
+function adminCall(extra){
+  var code = $('aCode').value.trim();
+  var p = {api:'admin', code:code};
+  for(var k in extra) p[k] = extra[k];
+  note('aErr','','');
+  return call(p).then(function(r){
+    if(!r.ok){ note('aErr','bad', r.error || 'שגיאה'); return; }
+    S.admin = r;
+    $('adminGate').classList.add('hide');
+    $('adminPanel').classList.remove('hide');
+    drawAdmin(r);
+  });
+}
+
+function drawAdmin(r){
+  var st = r.stats, s = r.settings;
+  var h = '<div class="card"><h2>ניהול המשתמשים</h2>' +
+    '<div class="stats">' +
+    '<div class="stat"><b>'+st.total+'</b><span>נרשמו</span></div>' +
+    '<div class="stat"><b style="color:var(--warn)">'+st.pending+'</b><span>ממתינים</span></div>' +
+    '<div class="stat"><b style="color:var(--ok)">'+st.approved+'</b><span>מאושרים</span></div>' +
+    '<div class="stat"><b>'+st.runs+'</b><span>פעולות</span></div>' +
+    '</div><div class="row" style="margin-bottom:16px">' +
+    '<button class="btn sec" data-op="approveAll">אשר את כל הממתינים</button>' +
+    '<button class="btn sec" data-set="autoApprove" data-val="'+(s.autoApprove?0:1)+'">' +
+      (s.autoApprove?'כבה אישור אוטומטי':'הפעל אישור אוטומטי')+'</button>' +
+    '<button class="btn sec" id="aRefresh">רענן</button>' +
+    '<button class="btn sec" id="aOut">יציאה</button></div>' +
+    '<div class="note '+(s.autoApprove?'warn':'ok')+'">' +
+      (s.autoApprove
+        ? 'אישור אוטומטי דלוק: כל מי שנרשם נכנס מיד, בלי אישור שלך.'
+        : 'אישור ידני: אף אחד לא נכנס עד שתאשר אותו כאן. זה המצב המומלץ.') +
+    '</div>';
+
+  h += '<div class="scroll"><table><tr><th>שם</th><th>פרטים</th><th>מצב</th><th>פעולות</th><th></th></tr>';
+  if(!r.users.length) h += '<tr><td colspan="5" style="color:var(--muted)">עוד לא נרשם אף אחד.</td></tr>';
+  r.users.forEach(function(u){
+    h += '<tr><td><b>'+esc(u.name)+'</b><div style="font-size:11.5px;color:var(--muted)">'+
+         (u.runs||0)+' פעולות</div></td>' +
+         '<td style="font-size:12.5px;color:var(--muted)">'+esc(u.note||'—')+'</td>' +
+         '<td><span class="tag '+u.status+'">'+
+           (u.status==='approved'?'מאושר':u.status==='blocked'?'חסום':'ממתין')+'</span></td>' +
+         '<td><div class="row">' +
+           (u.status!=='approved' ? '<button class="mini" data-op="approve" data-t="'+u.token+'">אשר</button>' : '') +
+           (u.status!=='blocked' ? '<button class="mini" data-op="block" data-t="'+u.token+'">חסום</button>' : '') +
+           (u.status==='blocked' ? '<button class="mini" data-op="pend" data-t="'+u.token+'">שחרר</button>' : '') +
+         '</div></td>' +
+         '<td><button class="mini" data-op="delete" data-t="'+u.token+'">מחק</button></td></tr>';
+  });
+  h += '</table></div></div>';
+
+  // ---- קודי כניסה ----
+  h += '<div class="card"><h2>קודי כניסה</h2>' +
+    '<p class="lead">מי שמקבל קוד נכנס מיד, בלי לחכות לאישור שלך. כל קוד תקף לשימוש אחד. ' +
+    'זו גם התשתית לגביית תשלום בעתיד: מוכרים קוד, והקונה נכנס לבד.</p>';
+  if(r.made && r.made.length){
+    h += '<div class="note ok" style="font-size:20px;letter-spacing:4px;font-weight:700;text-align:center">' +
+         r.made.map(esc).join('  ·  ') + '</div>' +
+         '<button class="btn sec" id="cpCodes" style="margin-bottom:14px">העתק את הקודים</button>';
+  }
+  h += '<div class="row" style="margin-bottom:14px">' +
+    '<button class="btn sec" data-op="codes" data-n="5">הנפק 5 קודים</button>' +
+    '<button class="btn sec" data-op="codes" data-n="20">הנפק 20 קודים</button>' +
+    '<button class="btn sec" data-op="clearCodes">נקה קודים שנוצלו</button></div>';
+  var free = (r.codes||[]).filter(function(c){ return !c.used; });
+  var used = (r.codes||[]).filter(function(c){ return c.used; });
+  h += '<div class="note">פנויים: '+free.length+' · נוצלו: '+used.length+'</div>';
+  if(free.length){
+    h += '<div style="font-family:monospace;font-size:16px;letter-spacing:2px;line-height:2.1">' +
+         free.map(function(c){ return esc(c.code); }).join(' · ') + '</div>';
+  }
+  if(used.length){
+    h += '<div class="scroll" style="margin-top:12px"><table><tr><th>קוד</th><th>נוצל על ידי</th></tr>';
+    used.slice(0,15).forEach(function(c){
+      h += '<tr><td style="font-family:monospace">'+esc(c.code)+'</td><td>'+esc(c.usedBy||'—')+'</td></tr>';
+    });
+    h += '</table></div>';
+  }
+  h += '</div>';
+
+  h += '<div class="card"><h2>הודעה לכל המשתמשים</h2>' +
+    '<p class="lead">תופיע בראש המסך אצל כולם. השאר ריק כדי להסיר.</p>' +
+    '<div class="field"><input type="text" id="aNotice" value="'+esc(s.notice||'')+'" placeholder="למשל: האפליקציה בתחזוקה הערב"></div>' +
+    '<button class="btn sec" id="aSaveNotice">שמור הודעה</button></div>';
+
+  h += '<div class="card"><h2>מנוע התשובות</h2>' +
+    '<p class="lead">האפליקציה עובדת תמיד, גם בלי מפתח: יש חמישה מנועים חינמיים כגיבוי. ' +
+    'מפתח של גוגל (Gemini) משפר את איכות התשובות בעברית.</p>' +
+    '<div class="note '+(r.hasKey?'ok':'warn')+'">' +
+      (r.hasKey ? 'מפתח גוגל מוגדר ✓ · המנועים החינמיים משמשים כגיבוי.'
+                : 'אין מפתח גוגל · כרגע עובדים המנועים החינמיים בלבד.') + '</div>' +
+    '<div class="field"><label for="aKey">מפתח Gemini (מתחיל ב-AIza)</label>' +
+    '<input type="text" id="aKey" placeholder="הדבק כאן, או השאר ריק כדי למחוק" autocomplete="off"></div>' +
+    '<button class="btn sec" id="aSaveKey">שמור מפתח</button></div>';
+
+  h += '<div class="card"><h2>יומן אחרון</h2><div class="scroll"><table>';
+  (r.log||[]).slice(0,25).forEach(function(l){
+    var d = new Date(l.t);
+    h += '<tr><td style="white-space:nowrap;font-size:12px;color:var(--muted)">' +
+         d.toLocaleDateString('he-IL')+' '+d.toLocaleTimeString('he-IL',{hour:'2-digit',minute:'2-digit'}) +
+         '</td><td style="font-size:13px">'+esc(l.kind)+'</td>' +
+         '<td style="font-size:13px">'+esc(l.who)+'</td>' +
+         '<td style="font-size:12.5px;color:var(--muted)">'+esc(l.detail)+'</td></tr>';
+  });
+  h += '</table></div></div>';
+
+  $('adminPanel').innerHTML = h;
+
+  Array.prototype.forEach.call($('adminPanel').querySelectorAll('[data-op]'), function(b){
+    b.onclick = function(){
+      var op = b.getAttribute('data-op'), t = b.getAttribute('data-t'), n = b.getAttribute('data-n');
+      if(op==='delete' && !confirm('למחוק את המשתמש?')) return;
+      var p = {op:op};
+      if(t) p.target = t;
+      if(n) p.n = n;
+      adminCall(p);
+    };
+  });
+  if($('cpCodes')){
+    $('cpCodes').onclick = function(){
+      navigator.clipboard.writeText((S.admin.made||[]).join('\n')).then(function(){
+        $('cpCodes').textContent = 'הועתק ✓';
+      });
+    };
+  }
+  Array.prototype.forEach.call($('adminPanel').querySelectorAll('[data-set]'), function(b){
+    b.onclick = function(){
+      var p = {op:'settings'};
+      p[b.getAttribute('data-set')] = b.getAttribute('data-val')==='1';
+      adminCall(p);
+    };
+  });
+  $('aRefresh').onclick = function(){ adminCall({op:'list'}); };
+  $('aOut').onclick = function(){
+    $('adminPanel').classList.add('hide');
+    $('adminGate').classList.remove('hide');
+    $('aCode').value = '';
+    refreshMe();
+  };
+  $('aSaveNotice').onclick = function(){
+    adminCall({op:'settings', notice:$('aNotice').value});
+  };
+  $('aSaveKey').onclick = function(){
+    adminCall({op:'key', key:$('aKey').value.trim()});
+  };
+}
+
+boot();
+</script>
+</body>
+</html>
