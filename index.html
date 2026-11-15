@@ -1340,6 +1340,34 @@ function drawLuz(d){
   $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
+
+/* ---------- תפיסת שגיאות גלובלית ----------
+   15/11/26, בקשת המשתמש: "שבזמן אמת כשאבקש תוכל לראות את הטעויות
+   שלו ולתקן". באג ב-JavaScript נראה למשתמש כ"לחצתי ולא קרה כלום" —
+   אין הודעה, אין עקבה, ואי אפשר לתקן מה שלא רואים. עכשיו כל שגיאה
+   שלא נתפסה מוצגת לו **וגם** נשמרת לדיווחים שנקראים מהמחשב.
+   השליחה מוגבלת לאחת, אחרת באג בלולאה מציף את התור.            */
+var _errSent = false;
+function reportErr(where, msg){
+  try {
+    if($('err')) note('err','bad','קרתה תקלה פנימית: ' + msg +
+      '  ·  נרשמה אצלי ואטפל בה. אפשר לנסות שוב.');
+    if(!_errSent && S && S.token){
+      _errSent = true;
+      call({api:'report', token:S.token, mode:(S.mode||''), via:'תקלה פנימית',
+            why:where + ': ' + msg,
+            ask:(($('txt')&&$('txt').value)||'').substring(0,200), got:''});
+    }
+  } catch(e){ /* גם הדיווח עצמו לא יפיל את הדף */ }
+}
+window.onerror = function(m, src, line, col){
+  reportErr('שגיאה', String(m) + ' (שורה ' + line + ':' + col + ')');
+};
+window.addEventListener('unhandledrejection', function(ev){
+  var r = ev && ev.reason;
+  reportErr('הבטחה שנדחתה', (r && r.message) || String(r));
+});
+
 /* ---------- קובץ מצורף ---------- */
 var PICKED = null;           /* {name, text} או {name, image:{mime,data}} */
 $('pick').onclick = function(){ $('file').click(); };
@@ -1554,7 +1582,8 @@ $('go').onclick = function(){
       '<button class="mini" id="cp">העתק</button>' +
       '<button class="mini" id="pdf">הורד PDF</button>' +
       '<button class="mini" id="bad">⚠️ לא נכון</button>' +
-      '</div><div class="out" id="outTxt"></div></div>';
+      '</div><div class="out" id="outTxt"></div>' +
+      '<div class="noprint" id="nextBox"></div></div>';
     $('outTxt').textContent = r.text;
     $('cp').onclick = function(){
       navigator.clipboard.writeText(S.last).then(function(){
@@ -1575,6 +1604,7 @@ $('go').onclick = function(){
         $('bad').textContent = 'דווח ✓'; $('bad').disabled = true;
       }, 500);
     };
+    drawNext(m, raw);
     $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
   })
   .catch(function(e){
@@ -1582,6 +1612,35 @@ $('go').onclick = function(){
     note('err','bad', (e && e.message) || 'שגיאה לא צפויה.');
   });
 };
+
+/* כפתורי המשך: כל כפתור הוא הנחיה מוכנה שמורצת מחדש על אותו חומר.
+   בבוט הטקסטים זה מה שמדייק את התוצאה בלי להקליד הכול שוב; כאן זה
+   לא היה קיים, ולכן כל תיקון קטן דרש להתחיל מהתחלה.
+
+   המקור נשאר בתיבה, ולכן ההרצה החוזרת פשוט לוחצת על "הפעל" מחדש
+   עם ההנחיה בשדה ההנחיה הנוספת — בלי מסלול מקביל ובלי כפל קוד. */
+function drawNext(m, lastRaw){
+  var list = (m && m.next) || [];
+  if(!list.length || !$('nextBox')) return;
+  var h = '<div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--line)">' +
+          '<div class="hint" style="margin-bottom:8px">לא בדיוק מה שרצית? ' +
+          'לחיצה אחת מריצה מחדש על אותו חומר:</div><div class="row">';
+  for(var i = 0; i < list.length; i++)
+    h += '<button class="btn sec" data-nx="' + i + '">' + esc(list[i][0]) + '</button>';
+  h += '</div></div>';
+  $('nextBox').innerHTML = h;
+  Array.prototype.forEach.call($('nextBox').querySelectorAll('[data-nx]'), function(bt){
+    bt.onclick = function(){
+      var it = list[parseInt(bt.getAttribute('data-nx'), 10)];
+      if(!it) return;
+      /* ההנחיה מחליפה הנחיה קודמת ולא נערמת עליה: צירוף של "בקצרה"
+         ו"בהרחבה" הוא הוראה סותרת, והמודל יבחר אחת מהן באקראי. */
+      $('extra').value = it[1];
+      if(lastRaw && !$('txt').value.trim()) $('txt').value = lastRaw;
+      $('go').click();
+    };
+  });
+}
 
 /* ---------- כלים מקומיים (בדפדפן, בלי שרת ובלי מכסה) ---------- */
 var UNDO = null;
