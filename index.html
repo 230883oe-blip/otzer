@@ -863,6 +863,7 @@ function sefariaSource(raw, say){
 
 /* ==== END sef_client ==== */
 
+/* ==== BEGIN files_client ==== */
 /* ===================================================================
    צירוף קובץ, והורדת PDF שבאמת מורידה.   (15/11/26, בקשת המשתמש)
 
@@ -916,30 +917,54 @@ function savePdf(title, body, btn){
   pre.textContent = body || '';
   page.appendChild(h); page.appendChild(sub); page.appendChild(pre);
 
-  var hold = document.createElement('div');
-  hold.style.cssText = 'position:fixed;left:-9999px;top:0';
-  hold.appendChild(page);
-  document.body.appendChild(hold);
+  document.body.appendChild(pdfHolder(page));
 
   function done(){
-    if(hold.parentNode) hold.parentNode.removeChild(hold);
+    pdfCleanup();
     if(btn){ btn.textContent = old; btn.disabled = false; }
   }
 
   return loadScript(CDN.html2pdf).then(function(){
     var name = (title || 'עוזר הכתיבה').replace(/[\\\/:*?"<>|]/g, ' ').substring(0, 60) + '.pdf';
-    return window.html2pdf().set({
-      margin: 0,
-      filename: name,
-      image: { type: 'jpeg', quality: 0.96 },
-      html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-      jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-      pagebreak: { mode: ['css', 'legacy'] }
-    }).from(page).save().then(done);
+    return window.html2pdf().set(pdfOpts(name)).from(page).save().then(done);
   }).catch(function(){
     done();
     window.print();
   });
+}
+
+/* ---------- שתי המלכודות של html2pdf, ושתיהן עלו כאן בפועל ----------
+
+   1. **`left:-9999px` מפיק PDF ריק.** html2canvas מצלם לפי מיקום
+      בדף, ואלמנט שיושב רחוק משדה הראייה יוצא דף לבן — זה מה שקרה
+      למשתמש במערך השיעור. העמוד חייב לשבת בתוך הדף; מה שמסתיר אותו
+      הוא `opacity:0` ו-`z-index` שלילי, לא מיקום מחוץ למסך.
+   2. **גלילה.** אם הדף גלול, הצילום נחתך. `scrollX/scrollY = 0`
+      ו-`windowWidth` מקובעים מונעים את זה.                       */
+var _pdfHold = null;
+function pdfHolder(page){
+  pdfCleanup();
+  var hold = document.createElement('div');
+  hold.style.cssText = 'position:absolute;top:0;left:0;z-index:-1;opacity:0;' +
+                       'pointer-events:none;width:794px;overflow:hidden;background:#fff';
+  hold.appendChild(page);
+  _pdfHold = hold;
+  return hold;
+}
+function pdfCleanup(){
+  if(_pdfHold && _pdfHold.parentNode) _pdfHold.parentNode.removeChild(_pdfHold);
+  _pdfHold = null;
+}
+function pdfOpts(name){
+  return {
+    margin: 0,
+    filename: name,
+    image: { type: 'jpeg', quality: 0.96 },
+    html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff',
+                   scrollX: 0, scrollY: 0, windowWidth: 820, logging: false },
+    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+    pagebreak: { mode: ['css', 'legacy'] }
+  };
 }
 
 /* ---------- קריאת קובץ ---------- */
@@ -1078,6 +1103,8 @@ function extractFile(file, say){
   }
   return Promise.reject(new Error('סוג הקובץ לא נתמך. אפשר: PDF, Word (docx), תמונה, או טקסט.'));
 }
+
+/* ==== END files_client ==== */
 
 
 /* ===================================================================
@@ -1298,24 +1325,16 @@ function drawLuz(d){
     var page = document.createElement('div');
     page.setAttribute('dir', 'rtl');
     page.innerHTML = '<style>' + LUZ_CSS + '</style>' + luzHtml(d, cur);
-    var hold = document.createElement('div');
-    hold.style.cssText = 'position:fixed;left:-9999px;top:0';
-    hold.appendChild(page);
-    document.body.appendChild(hold);
+    /* אותה מלכודת של `left:-9999px` שהפיקה PDF ריק — `pdfHolder`
+       מחזיק את העמוד בתוך הדף ומסתיר אותו ב-opacity. */
+    document.body.appendChild(pdfHolder(page));
     var bt = $('luzPdf'), old = bt.textContent;
     bt.textContent = 'מכין…'; bt.disabled = true;
-    function done(){
-      if(hold.parentNode) hold.parentNode.removeChild(hold);
-      bt.textContent = old; bt.disabled = false;
-    }
+    function done(){ pdfCleanup(); bt.textContent = old; bt.disabled = false; }
     loadScript(CDN.html2pdf).then(function(){
-      return window.html2pdf().set({
-        margin: 0,
-        filename: ((d.title || 'לוח זמנים').replace(/[\\\/:*?"<>|]/g,' ').substring(0,50)) + '.pdf',
-        image: { type:'jpeg', quality:0.97 },
-        html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff' },
-        jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
-      }).from(page).save().then(done);
+      return window.html2pdf().set(pdfOpts(
+        ((d.title || 'לוח זמנים').replace(/[\\\/:*?"<>|]/g,' ').substring(0,50)) + '.pdf'
+      )).from(page).save().then(done);
     }).catch(function(){ done(); window.print(); });
   };
   $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
@@ -1404,6 +1423,50 @@ $('go').onclick = function(){
   /* 🗓️ לוח זמנים רץ **כאן ועכשיו**, בלי שרת ובלי מודל ובלי מכסה —
      בדיוק כמו בבוט הטקסטים, שם המנתח חינמי והעיצוב נעשה בדפדפן.
      לכן הוא יוצא מהמסלול לפני בקשת הכרטיס. */
+  /* 📄 קובץ PDF: עיצוב עמוד להדפסה. גם זה בלי מודל ובלי מכסה —
+     מה שצריך הוא הטקסט, וקישור נקרא בשער הקריאה כמו בכל מצב. */
+  if(S.mode === 'printpdf'){
+    var mk = function(body){
+      var lines = body.split('\n');
+      var ttl = (lines[0] || '').trim();
+      /* שורה ראשונה קצרה היא כותרת; שורה ארוכה היא תחילת התוכן
+         ואין לחתוך אותה מהמסמך. */
+      var rest = body;
+      if(ttl && ttl.length <= 70 && lines.length > 1){ rest = lines.slice(1).join('\n').trim(); }
+      else { ttl = 'מסמך להדפסה'; }
+      S.last = rest;
+      $('resultBox').innerHTML =
+        '<div class="result"><div class="meta noprint">' +
+        '<span class="pill">📄 קובץ PDF</span>' +
+        '<span>' + rest.split(/\s+/).length.toLocaleString('he-IL') + ' מילים · בלי מכסה</span>' +
+        '<span class="spacer" style="flex:1"></span>' +
+        '<button class="mini" id="cp2">העתק</button>' +
+        '<button class="mini" id="pdf2">הורד PDF</button>' +
+        '</div><div class="out" id="outTxt"></div></div>';
+      $('outTxt').textContent = rest;
+      $('cp2').onclick = function(){
+        navigator.clipboard.writeText(rest).then(function(){ $('cp2').textContent = 'הועתק ✓'; }); };
+      $('pdf2').onclick = function(){ savePdf(ttl, rest, $('pdf2')); };
+      call({api:'done', token:S.token, mode:'printpdf', via:'מקומי (בלי מכסה)'});
+      $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+      b.disabled = false; $('goTxt').textContent = 'הפעל';
+    };
+    if(PICKED && PICKED.text){ mk(PICKED.text); return; }
+    if(isLink){
+      $('goTxt').innerHTML = '<span class="spin"></span> קורא את הקישור…';
+      readLink(raw).then(function(t2){
+        if(!t2){ b.disabled = false; $('goTxt').textContent = 'הפעל';
+          note('err','bad','לא הצלחתי לקרוא את הדף. נסה להדביק את הטקסט.'); return; }
+        mk(t2);
+      });
+      return;
+    }
+    if(!raw){ b.disabled = false; $('goTxt').textContent = 'הפעל';
+      note('err','warn','צריך טקסט, קובץ או קישור.'); return; }
+    mk(raw);
+    return;
+  }
+
   if(S.mode === 'luz'){
     b.disabled = false; $('goTxt').textContent = 'הפעל';
     var ld = luzParse(raw);
