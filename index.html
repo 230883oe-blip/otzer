@@ -546,6 +546,7 @@ function readLink(url){
   return tryOne();
 }
 
+/* ==== BEGIN sef_client ==== */
 /* ===================================================================
    ספריא — הבאת המקור האמיתי, בדפדפן של המשתמש.   (15/11/26)
 
@@ -572,15 +573,23 @@ var CHELEK = [
 ];
 
 /* נושאי הכלים, וכל אחד רק בחלק שבו הוא קיים. נושא כלים שאינו קיים
-   בחלק מחזיר שגיאה מספריא — ובקשה מיותרת היא גם זמן וגם רעש. */
+   בחלק מחזיר שגיאה מספריא — ובקשה מיותרת היא גם זמן וגם רעש.
+
+   `solo: true` = הספר אינו בנוי בספריא כפירוש על השולחן ערוך אלא
+   כספר בפני עצמו, ולכן המראה מקום הוא `<שם> <סימן>` בלבד. נמדד
+   15/11/26: `Magen Avraham on Shulchan Arukh, Orach Chayim 1` מחזיר
+   את **כל הספר** — 6,433 קטעים ו-1.68 מיליון תווים — ולא שגיאה.
+   זה הסוג הגרוע: בקשה פסולה שחוזרת "בהצלחה". */
 var NOSEI = [
   { en: 'Turei Zahav',      he: 'ט״ז',           parts: ['oc','yd','eh','cm'] },
   { en: 'Siftei Kohen',     he: 'ש״ך',           parts: ['yd','cm'] },
-  { en: 'Magen Avraham',    he: 'מגן אברהם',     parts: ['oc'] },
+  { en: 'Magen Avraham',    he: 'מגן אברהם',     parts: ['oc'], solo: true },
   { en: "Me'irat Einayim",  he: 'סמ״ע',          parts: ['cm'] },
+  { en: 'Netivot HaMishpat, Beurim', he: 'נתיבות המשפט', parts: ['cm'] },
   { en: 'Pitchei Teshuva',  he: 'פתחי תשובה',    parts: ['yd','eh','cm'] },
   { en: "Ba'er Hetev",      he: 'באר היטב',      parts: ['oc','yd','eh','cm'] },
-  { en: 'Beur HaGra',       he: 'ביאור הגר״א',   parts: ['oc','yd','eh','cm'] }
+  { en: 'Beur HaGra',       he: 'ביאור הגר״א',   parts: ['oc','yd','eh','cm'] },
+  { en: 'Rabbi Akiva Eiger', he: 'רבי עקיבא איגר', parts: ['oc','yd','eh','cm'] }
 ];
 var PART_CODE = { "Yoreh De'ah":'yd', 'Orach Chayim':'oc', 'Choshen Mishpat':'cm', 'Even HaEzer':'eh' };
 
@@ -632,11 +641,19 @@ function sefFlat(x){
   return out;
 }
 
+/* שומר הסף, והוא הכרחי: ספריא **אינה** מחזירה שגיאה על מראה מקום
+   שהיא לא מזהה — היא מחזירה את הספר כולו, בקוד 200, עם `ref` מקוצר.
+   לכן בודקים שהמספר שביקשנו מופיע ב-`ref` שחזר. בלי זה "מגן אברהם
+   סימן א" היה מזרים 1.68 מיליון תווים לפרומפט ושובר את הבקשה —
+   ובכל ספר שיתווסף בעתיד זה היה חוזר. */
 function sefText(ref){
   var url = SEF + encodeURIComponent(ref.replace(/ /g, '_')).replace(/%2C/g, ',') + '?version=hebrew';
+  var want = (ref.match(/(\d+)[ab]?\s*$/) || [])[1];
   return withTimeout(fetch(url).then(function(r){ return r.ok ? r.json() : null; }), 35000)
     .then(function(d){
       if(!d || d.error || !d.versions || !d.versions.length) return [];
+      var got = String(d.ref || '');
+      if(want && got && got.indexOf(want) < 0) return [];
       return sefFlat(d.versions[0].text).map(sefClean).filter(function(s){ return s.length > 1; });
     })
     .catch(function(){ return []; });
@@ -716,6 +733,8 @@ function wantedBooks(t){
     else if(n.he === 'מגן אברהם' && /מגן\s*אברהם|מג["״]א/.test(t)) named.push(n);
     else if(n.he === 'באר היטב' && /באר\s*היטב/.test(t)) named.push(n);
     else if(n.he === 'ביאור הגר״א' && /גר["״]א/.test(t)) named.push(n);
+    else if(n.he === 'נתיבות המשפט' && /נתיבות(\s*המשפט)?|נתיה["״]מ/.test(t)) named.push(n);
+    else if(n.he === 'רבי עקיבא איגר' && /עקיבא\s*איגר|רע["״]א/.test(t)) named.push(n);
   }
   w.named = named;
   return w;
@@ -737,8 +756,9 @@ function fetchSiman(p, raw, say){
   var list = w.named.length ? w.named : (w.nosei ? NOSEI : []);
   var i;
   for(i = 0; i < list.length; i++){
-    if(list[i].parts.indexOf(code) >= 0)
-      add(list[i].he, list[i].en + ' on Shulchan Arukh' + C);
+    if(list[i].parts.indexOf(code) < 0) continue;
+    add(list[i].he, list[i].solo ? (list[i].en + ' ' + p.siman)
+                                 : (list[i].en + ' on Shulchan Arukh' + C));
   }
 
   if(say) say('מביא מספריא: סימן ' + p.siman + ' ב' + p.part.he + '…');
@@ -766,10 +786,22 @@ function fetchSiman(p, raw, say){
       }
     }
     if(!got.length) return null;
-    return { text: out.join('\n'),
+    return { text: sefCap(out.join('\n')),
              note: 'מקור מלא מספריא · סימן ' + p.siman + ' ב' + p.part.he + ' · ' + got.join(', '),
              missing: missing };
   });
+}
+
+/* תקרת גודל. סימן עם כל נושאי הכלים נמדד כ-45 עד 70 אלף תווים — דגמי
+   גוגל מתמודדים, ומנועי הטקסט החינמיים נופלים בשקט על פרומפט כזה.
+   חותכים בגבול שורה ואומרים שנחתך, במקום להחזיר חצי בקשה בלי הסבר. */
+var SEF_MAX = 90000;
+function sefCap(t){
+  if(t.length <= SEF_MAX) return t;
+  var cut = t.lastIndexOf('\n', SEF_MAX);
+  return t.substring(0, cut > SEF_MAX / 2 ? cut : SEF_MAX) +
+         '\n\n[החומר ארוך מאוד ונחתך כאן. סכם את מה שנמסר, וציין בסוף ' +
+         'שהחומר נחתך ושכדאי לבקש סימן אחד או סעיפים מסוימים.]';
 }
 
 function fetchDaf(d, raw, say){
@@ -828,6 +860,8 @@ function sefariaSource(raw, say){
   if(d) return fetchDaf(d, raw, say);
   return Promise.resolve(null);
 }
+
+/* ==== END sef_client ==== */
 
 /* ===================================================================
    צירוף קובץ, והורדת PDF שבאמת מורידה.   (15/11/26, בקשת המשתמש)
