@@ -185,6 +185,7 @@ footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px
   .out{border:0;font-size:12pt}
 }
 </style>
+<style id="luzCss"></style>
 </head>
 <body>
 <div class="wrap">
@@ -1045,6 +1046,247 @@ function extractFile(file, say){
 }
 
 
+/* ===================================================================
+   🗓️ לוח זמנים — עיצוב עמוד A4 בדפדפן.   (15/11/26, בקשת המשתמש)
+
+   בבוט הטקסטים זה רץ ב-Edge headless על המחשב (D:/claude-tools/schedules).
+   כאן אותה יכולת בדיוק, אבל הרינדור הוא בדפדפן של המשתמש עצמו —
+   ולכן זה גם עובד כשהמחשב כבוי, וגם לא עולה כלום.
+
+   המנתח חינמי לגמרי: בלי מודל ובלי מכסה. הוא הועתק מהלוגיקה של
+   `parse.py`, והכללים שם נכתבו מול הודעות אמיתיות:
+     * כותרת יום  = שורה שנגמרת ב-":" ואין בה שעה
+     * אירוע      = שורה שמתחילה בשעה
+     * "משוער"    = זמן מוערך
+     * *כוכביות*  = תזכורת
+   =================================================================== */
+
+var LUZ_KEY = ['הדלקת נרות','צאת','שקיעה','כניסת שבת','כניסת החג','הבדלה','יציאת','התכנסות'];
+var LUZ_DAY = /^(יום|ליל|לילה|שבת|מוצאי|ערב|חג|א['׳]|ב['׳]|ג['׳]|ד['׳]|ה['׳]|ו['׳])/;
+var LUZ_TIME = /^\s*[-•·*]?\s*(\d{1,2})[:.](\d{2})\s*[:\-–—.]?\s*(.*)$/;
+
+function luzClean(t){
+  return (t || '').replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '');
+}
+function luzStrip(s){ return (s || '').replace(/^[\s*_~]+|[\s*_~]+$/g, ''); }
+
+function luzEvent(rest){
+  rest = (rest || '').replace(/\*/g, '');
+  var approx = /משוער/.test(rest);
+  if(approx) rest = rest.replace(/\(?\s*(זמן\s+)?משוער\S*\s*\)?\s*/, ' ');
+  rest = rest.replace(/\s+/g, ' ').replace(/^[\s,.\-–:]+|[\s,.\-–:]+$/g, '');
+  var parts = rest.split(/\.\s+/), first = (parts[0] || '').replace(/^[\s.]+|[\s.]+$/g, '');
+  var notes = parts.slice(1).map(function(x){ return x.replace(/^[\s.]+|[\s.]+$/g, ''); })
+                   .filter(function(x){ return x; });
+  var m = first.match(/(?:,\s*|\s+)(ו?לאחר\s.+)$/);
+  if(m){
+    notes.unshift(m[1].replace(/^ולאחר מכן/, 'לאחר מכן'));
+    first = first.substring(0, m.index).replace(/[\s,.\-–:]+$/, '');
+  }
+  var key = false, i;
+  for(i = 0; i < LUZ_KEY.length; i++) if(first.indexOf(LUZ_KEY[i]) >= 0) key = true;
+  return { time:'', title:first, note:notes.join('. '), approx:approx, key:key };
+}
+
+function luzParse(text){
+  var lines = luzClean(text).split('\n'), out = { title:'', kicker:'', greeting:'',
+    days:[], reminder:'', closing:'' };
+  var cur = null, pre = [], post = [], i;
+
+  for(i = 0; i < lines.length; i++){
+    var ln = lines[i].replace(/\s+$/, '');
+    if(!ln.trim()) continue;
+    var bare = luzStrip(ln);
+
+    var m = ln.match(LUZ_TIME);
+    if(m){
+      if(!cur){ cur = { name:'', date:'', events:[] }; out.days.push(cur); }
+      var e = luzEvent(m[3]);
+      var hh = parseInt(m[1], 10), mm = m[2];
+      if(hh >= 0 && hh <= 23){
+        e.time = (hh < 10 ? '0' : '') + hh + ':' + mm;
+        cur.events.push(e);
+      }
+      continue;
+    }
+    /* תזכורת בכוכביות. חייב להיבדק לפני כותרת היום: "*לא לשכוח:*"
+       נגמר בנקודתיים והיה נקרא כיום חדש וריק. */
+    if(/^\s*\*.+\*\s*$/.test(ln)){ out.reminder = bare; continue; }
+    /* כותרת יום: נגמר בנקודתיים, או שורה קצרה שנפתחת ברמז של יום. */
+    if(/:\s*$/.test(bare) || (bare.length <= 28 && LUZ_DAY.test(bare) && cur)){
+      var nm = bare.replace(/:\s*$/, ''), dt = '';
+      var dm = nm.match(/[-–—]\s*(.+)$/);
+      if(dm){ dt = dm[1].trim(); nm = nm.substring(0, dm.index).trim(); }
+      cur = { name:nm, date:dt, events:[] };
+      out.days.push(cur);
+      continue;
+    }
+    if(cur) post.push(bare); else pre.push(bare);
+  }
+
+  out.days = out.days.filter(function(d){ return d.events.length; });
+  if(pre.length){
+    out.title = pre[0];
+    if(pre.length > 1) out.kicker = pre[1];
+    if(pre.length > 2) out.greeting = pre.slice(2).join(' · ');
+  }
+  if(post.length) out.closing = post.join(' · ');
+  return out;
+}
+
+function luzCount(d){
+  var n = 0, i;
+  for(i = 0; i < d.days.length; i++) n += d.days[i].events.length;
+  return n;
+}
+
+/* ---------- התבניות ---------- */
+/* שלוש, וכל אחת נבדלת בשימוש ולא רק בצבע: "כחול וזהב" לשבת וחג,
+   "טבלה נקייה" ללוח מעשי שמודפס ונתלה, "קלף" לאירוע מיוחד. */
+var LUZ_STYLES = [
+  { key:'blue',  name:'כחול וזהב' },
+  { key:'clean', name:'טבלה נקייה' },
+  { key:'scroll',name:'קלף ומגילה' }
+];
+
+function luzHtml(d, style){
+  function e(s){
+    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  var th = {
+    blue:  { bg:'linear-gradient(170deg,#0b1f45,#13326b 60%,#0b1f45)', fg:'#f6f3e7',
+             acc:'#e8c46a', card:'rgba(255,255,255,.07)', line:'rgba(232,196,106,.35)' },
+    clean: { bg:'#ffffff', fg:'#16202e', acc:'#1e5fa8',
+             card:'#f4f7fb', line:'#d5e0ee' },
+    scroll:{ bg:'linear-gradient(170deg,#f6ecd6,#efe0c0)', fg:'#3b2a14', acc:'#8a5a21',
+             card:'rgba(255,255,255,.58)', line:'rgba(138,90,33,.3)' }
+  }[style] || null;
+  if(!th) th = { bg:'#fff', fg:'#111', acc:'#1e5fa8', card:'#f3f5f9', line:'#dde3ec' };
+
+  var h = '<div class="luzpg" style="background:' + th.bg + ';color:' + th.fg + '">';
+  h += '<div class="luzbsd" style="color:' + th.acc + '">בס"ד</div>';
+  if(d.kicker) h += '<div class="luzkick" style="color:' + th.acc + '">' + e(d.kicker) + '</div>';
+  h += '<h1 class="luzt">' + e(d.title || 'לוח זמנים') + '</h1>';
+  if(d.greeting) h += '<div class="luzgr">' + e(d.greeting) + '</div>';
+  h += '<div class="luzrule" style="background:' + th.acc + '"></div>';
+
+  h += '<div class="luzdays' + (d.days.length > 2 ? ' two' : '') + '">';
+  for(var i = 0; i < d.days.length; i++){
+    var day = d.days[i];
+    h += '<div class="luzday" style="background:' + th.card + ';border-color:' + th.line + '">';
+    if(day.name) h += '<div class="luzdn" style="color:' + th.acc +
+      ';border-color:' + th.line + '">' + e(day.name) +
+      (day.date ? ' <span class="luzdd">' + e(day.date) + '</span>' : '') + '</div>';
+    for(var j = 0; j < day.events.length; j++){
+      var ev = day.events[j];
+      h += '<div class="luzev' + (ev.key ? ' key' : '') + '">' +
+           '<span class="luzhh" style="color:' + th.acc + '">' + e(ev.time) + '</span>' +
+           '<span class="luzti">' + e(ev.title) +
+           (ev.approx ? ' <span class="luzap">(משוער)</span>' : '') +
+           (ev.note ? '<span class="luznt">' + e(ev.note) + '</span>' : '') +
+           '</span></div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+
+  if(d.reminder) h += '<div class="luzrem" style="border-color:' + th.acc +
+    ';color:' + th.acc + '">' + e(d.reminder) + '</div>';
+  if(d.closing) h += '<div class="luzcl">' + e(d.closing) + '</div>';
+  h += '</div>';
+  return h;
+}
+
+var LUZ_CSS =
+'.luzpg{width:794px;min-height:1123px;box-sizing:border-box;padding:44px 46px;' +
+ 'direction:rtl;text-align:right;font-family:"Segoe UI",Arial,sans-serif;position:relative}' +
+'.luzbsd{position:absolute;top:18px;left:46px;font-size:13px;opacity:.85}' +
+'.luzkick{font-size:16px;font-weight:600;letter-spacing:.5px;margin-bottom:2px}' +
+'.luzt{font-size:40px;line-height:1.15;margin:0 0 6px;font-weight:800}' +
+'.luzgr{font-size:16.5px;opacity:.88;margin-bottom:12px}' +
+'.luzrule{height:3px;border-radius:3px;margin:10px 0 20px;opacity:.8}' +
+'.luzdays{display:flex;flex-direction:column;gap:14px}' +
+'.luzdays.two{display:grid;grid-template-columns:1fr 1fr;gap:14px}' +
+'.luzday{border:1.5px solid;border-radius:14px;padding:14px 16px}' +
+'.luzdn{font-size:20px;font-weight:700;padding-bottom:7px;margin-bottom:9px;' +
+ 'border-bottom:1.5px solid}' +
+'.luzdd{font-size:14px;font-weight:500;opacity:.8}' +
+'.luzev{display:flex;gap:11px;align-items:baseline;padding:4.5px 0;font-size:16px}' +
+'.luzev.key{font-weight:700}' +
+'.luzhh{font-variant-numeric:tabular-nums;font-weight:700;min-width:54px;font-size:16.5px}' +
+'.luzti{flex:1}.luzap{font-size:13px;opacity:.75}' +
+'.luznt{display:block;font-size:13.5px;opacity:.78;margin-top:1px}' +
+'.luzrem{margin-top:18px;border:2px dashed;border-radius:12px;padding:11px 14px;' +
+ 'font-size:16px;font-weight:600;text-align:center}' +
+'.luzcl{margin-top:16px;font-size:16px;text-align:center;opacity:.9;font-weight:600}';
+
+/* ציור לוח הזמנים: שלוש תבניות, מעבר ביניהן בלחיצה, והורדת PDF של
+   מה שרואים. העיצוב מוזרק פעם אחת לתג ששמור לו ב-<head>. */
+function drawLuz(d){
+  if(!$('luzCss').textContent) $('luzCss').textContent = LUZ_CSS;
+  var cur = LUZ_STYLES[0].key;
+  var h = '<div class="result"><div class="meta noprint">' +
+          '<span class="pill">🗓️ לוח זמנים</span>' +
+          '<span>' + d.days.length + ' ימים · ' + luzCount(d) + ' אירועים · בלי מכסה</span>' +
+          '<span class="spacer" style="flex:1"></span>' +
+          '<button class="mini" id="luzPdf">הורד PDF</button></div>' +
+          '<div class="row noprint" id="luzPick" style="margin-bottom:12px"></div>' +
+          '<div id="luzView" style="overflow:auto"></div></div>';
+  $('resultBox').innerHTML = h;
+
+  function paint(){
+    var p = '', i;
+    for(i = 0; i < LUZ_STYLES.length; i++){
+      p += '<button class="btn sec' + (LUZ_STYLES[i].key === cur ? '' : '') +
+           '" data-s="' + LUZ_STYLES[i].key + '"' +
+           (LUZ_STYLES[i].key === cur ? ' style="outline:2px solid var(--brand)"' : '') +
+           '>' + LUZ_STYLES[i].name + '</button>';
+    }
+    $('luzPick').innerHTML = p;
+    Array.prototype.forEach.call($('luzPick').children, function(bt){
+      bt.onclick = function(){ cur = bt.getAttribute('data-s'); paint(); };
+    });
+    /* התצוגה מוקטנת כדי שעמוד A4 ייכנס למסך הטלפון. ה-PDF נוצר
+       מהגודל המלא, ולכן ההקטנה אינה פוגעת בו. */
+    $('luzView').innerHTML =
+      '<div id="luzScale" style="transform-origin:top right">' + luzHtml(d, cur) + '</div>';
+    var w = $('luzView').clientWidth || 794;
+    var k = Math.min(1, (w - 4) / 794);
+    $('luzScale').style.transform = 'scale(' + k + ')';
+    $('luzView').style.height = (1123 * k + 10) + 'px';
+  }
+  paint();
+
+  $('luzPdf').onclick = function(){
+    /* נבנה מחדש בגודל מלא ובלי ההקטנה — html2pdf מצלם את מה שיש
+       בפועל, וצילום של תצוגה מוקטנת היה יוצא מטושטש. */
+    var page = document.createElement('div');
+    page.setAttribute('dir', 'rtl');
+    page.innerHTML = '<style>' + LUZ_CSS + '</style>' + luzHtml(d, cur);
+    var hold = document.createElement('div');
+    hold.style.cssText = 'position:fixed;left:-9999px;top:0';
+    hold.appendChild(page);
+    document.body.appendChild(hold);
+    var bt = $('luzPdf'), old = bt.textContent;
+    bt.textContent = 'מכין…'; bt.disabled = true;
+    function done(){
+      if(hold.parentNode) hold.parentNode.removeChild(hold);
+      bt.textContent = old; bt.disabled = false;
+    }
+    loadScript(CDN.html2pdf).then(function(){
+      return window.html2pdf().set({
+        margin: 0,
+        filename: ((d.title || 'לוח זמנים').replace(/[\\\/:*?"<>|]/g,' ').substring(0,50)) + '.pdf',
+        image: { type:'jpeg', quality:0.97 },
+        html2canvas: { scale:2, useCORS:true, backgroundColor:'#ffffff' },
+        jsPDF: { unit:'mm', format:'a4', orientation:'portrait' }
+      }).from(page).save().then(done);
+    }).catch(function(){ done(); window.print(); });
+  };
+  $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 /* ---------- קובץ מצורף ---------- */
 var PICKED = null;           /* {name, text} או {name, image:{mime,data}} */
 $('pick').onclick = function(){ $('file').click(); };
@@ -1124,6 +1366,22 @@ $('go').onclick = function(){
 
   var isLink = /^https?:\/\/\S+$/.test(raw);
   var ticket = null, srcNote = '';
+
+  /* 🗓️ לוח זמנים רץ **כאן ועכשיו**, בלי שרת ובלי מודל ובלי מכסה —
+     בדיוק כמו בבוט הטקסטים, שם המנתח חינמי והעיצוב נעשה בדפדפן.
+     לכן הוא יוצא מהמסלול לפני בקשת הכרטיס. */
+  if(S.mode === 'luz'){
+    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    var ld = luzParse(raw);
+    if(!luzCount(ld)){
+      note('err','bad','לא זיהיתי שעות בלוח. כל אירוע בשורה שמתחילה בשעה, ' +
+        'למשל: 16:12 הדלקת נרות · וכותרת לכל יום שנגמרת בנקודתיים.');
+      return;
+    }
+    drawLuz(ld);
+    call({api:'done', token:S.token, mode:'luz', via:'מקומי (בלי מכסה)'});
+    return;
+  }
 
   post({api:'ticket', token:S.token, mode:S.mode})
   .then(function(t){
