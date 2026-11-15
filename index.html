@@ -419,17 +419,20 @@ function setMode(k){
    שלו, ולכן אין מכסה מרכזית אחת שנגמרת לכולם יחד.
    המנועים נבדקו בפועל (15/11/26) ועונים לפנייה ישירה מדפדפן.
    =================================================================== */
+var LLM7 = 'https://api.llm7.io/v1/chat/completions';
 var ENGINES = [
   { name:'pollinations', url:'https://text.pollinations.ai/openai', model:'openai' },
   { name:'pollinations-fast', url:'https://text.pollinations.ai/openai', model:'openai-fast' },
-  { name:'llm7-minimax', url:'https://api.llm7.io/v1/chat/completions',
-    model:'minimax-m2.7', auth:'Bearer unused' },
-  { name:'llm7-codestral', url:'https://api.llm7.io/v1/chat/completions',
-    model:'codestral-latest', auth:'Bearer unused' }
+  { name:'minimax',   url:LLM7, model:'minimax-m2.7',               auth:'Bearer unused' },
+  { name:'deepseek',  url:LLM7, model:'DeepSeek-V4-Flash-0731',     auth:'Bearer unused' },
+  { name:'glm',       url:LLM7, model:'glm-5.3-flash',              auth:'Bearer unused' },
+  { name:'gpt-oss',   url:LLM7, model:'gpt-oss:20b',                auth:'Bearer unused' },
+  { name:'codestral', url:LLM7, model:'codestral-latest',           auth:'Bearer unused' },
+  { name:'nemo',      url:LLM7, model:'mistral-Nemo-Instruct-2407', auth:'Bearer unused' }
 ];
 /* דגמי גוגל, אם המנהל הגדיר מפתח. המכסה היומית היא לכל דגם בנפרד,
    ולכן רשימה ארוכה היא כמה מכסות ולא אחת. */
-var GEMINI_MODELS = ['gemini-3.1-flash-lite','gemini-3.8-flash','gemini-3.6-flash',
+var GEMINI_MODELS = ['gemini-3.1-flash-lite','gemini-3.6-flash','gemini-3.8-flash',
                      'gemini-flash-latest','gemini-3.5-flash'];
 
 function withTimeout(p, ms){
@@ -469,6 +472,9 @@ function askGemini(key, system, text){
 }
 
 function askFree(system, text){
+  /* הדגל מתאפס בכל בקשה: בלעדיו מנוע שניסה שוב פעם אחת לא ינסה שוב
+     לעולם, והאפליקציה הייתה נחלשת ככל שהיא רצה יותר. */
+  ENGINES.forEach(function(g){ g._retried = false; });
   var i = 0;
   function tryOne(){
     if(i >= ENGINES.length) return Promise.resolve(null);
@@ -479,7 +485,20 @@ function askFree(system, text){
       method:'POST', headers:h,
       body: JSON.stringify({ model:g.model, messages:[
         {role:'system',content:system},{role:'user',content:text}]})
-    }).then(function(r){ return r.ok ? r.json() : null; }), 90000)
+    }).then(function(r){
+      /* 429/402/503 הם עומס רגעי ולא מנוע שבור. המתנה קצרה ועוד ניסיון
+         אחד פותרת את רובם, ובלעדיה השרשרת נשרפת על גל עומס אחד. */
+      if(!r.ok && (r.status===429 || r.status===402 || r.status===503) && !g._retried){
+        g._retried = true;
+        return new Promise(function(res){ setTimeout(res, 2500); }).then(function(){
+          return fetch(g.url, {method:'POST', headers:h,
+            body: JSON.stringify({ model:g.model, messages:[
+              {role:'system',content:system},{role:'user',content:text}]})
+          }).then(function(r2){ return r2.ok ? r2.json() : null; });
+        });
+      }
+      return r.ok ? r.json() : null;
+    }), 90000)
     .then(function(d){
       var ch = d && d.choices && d.choices[0];
       var s = (ch && ch.message && ch.message.content) || (ch && ch.text) || '';
