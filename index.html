@@ -251,7 +251,7 @@ footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px
           <button class="btn sec" id="pick" type="button">📎 צרף קובץ</button>
           <button class="btn sec hide" id="clrFile" type="button">הסר קובץ</button>
           <input type="file" id="file" class="hide"
-                 accept=".pdf,.docx,.txt,.md,.csv,.json,.rtf,.htm,.html,.srt,image/*">
+                 accept=".pdf,.docx,.txt,.md,.csv,.json,.rtf,.htm,.html,.srt,image/*" multiple>
         </div>
         <div id="fileNote"></div>
       </div>
@@ -896,15 +896,41 @@ function loadScript(url){
    ולעתים לא עושה כלום (נמדד — המשתמש לחץ ולא קיבל קובץ). html2pdf
    מרנדר את מה שרואים ושומר קובץ. עברית עובדת כי זו תמונה של טקסט
    שהדפדפן כבר סידר — jsPDF לבדו היה דורש גופן עברי מוטבע.
-   אם רשת ההפצה חסומה — נפילה להדפסה, כדי שתמיד תהיה דרך. */
-function savePdf(title, body, btn){
-  var old = btn ? btn.textContent : '';
-  if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
+   אם רשת ההפצה חסומה — נפילה להדפסה, כדי שתמיד תהיה דרך.
 
-  var page = document.createElement('div');
-  page.setAttribute('dir', 'rtl');
-  page.style.cssText = 'width:760px;padding:48px 54px;background:#fff;color:#111;' +
+   16/11/26 — "הפיק PDF וכמעט לא היה מלל". השורש, אחרי מדידה בדפדפן
+   אמיתי (`pdf_probe*.py`): עד כאן כל המסמך צולם כ**קנבס אחד ארוך**
+   ו-html2pdf חתך אותו לעמודים. 1,200 מילים => עמוד בגובה 3,437px =>
+   בסקייל 2 קנבס של 1520x6874 = 10.4 מיליון פיקסלים. במחשב זה עובד
+   (נמדד: 4 עמודים מלאים), ובטלפון זו חריגה מתקרת הקנבס של הדפדפן —
+   והוא מחזיר תמונה **לבנה בשקט**, בלי שום שגיאה. לכן גם לא נתפס:
+   הבדיקות רצו במחשב.
+
+   עכשיו המסמך מחולק לעמודי A4 **לפני** הצילום, כל עמוד מצולם לבד
+   (כ-4.3 מיליון פיקסלים — מתחת לכל תקרה מוכרת), והעמודים מורכבים
+   לקובץ אחד. שני רווחים שלא היו קודם: החיתוך נופל בין שורות ולא
+   באמצען, ויש מספור עמודים כשיש יותר משני עמודים — בדיוק כמו
+   בבוט הטקסטים.                                                  */
+
+var PG_IN = 760;                                  /* רוחב התוכן      */
+var PG_PX = 54, PG_PY = 48;                       /* שוליים          */
+var PG_W  = PG_IN + PG_PX * 2;                    /* 868px  = 210mm  */
+/* פחות שני פיקסלים: עמוד שגובהו בדיוק 297mm יוצא ב-html2pdf שני
+   עמודים בגלל עיגול, והשני ריק. */
+var PG_H  = Math.floor(PG_W * 297 / 210) - 2;
+
+function pdfPageEl(){
+  var d = document.createElement('div');
+  d.setAttribute('dir', 'rtl');
+  d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
+    'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
+    'padding:' + PG_PY + 'px ' + PG_PX + 'px;background:#fff;color:#111;' +
     'font:15.5px/1.85 "Segoe UI",Arial,sans-serif;direction:rtl;text-align:right';
+  return d;
+}
+
+function pdfHead(title){
+  var w = document.createElement('div');
   var h = document.createElement('div');
   h.style.cssText = 'font-size:21px;font-weight:700;margin-bottom:6px;color:#1e3a8a';
   h.textContent = title || 'עוזר הכתיבה';
@@ -912,12 +938,88 @@ function savePdf(title, body, btn){
   sub.style.cssText = 'font-size:12px;color:#666;margin-bottom:22px;' +
     'border-bottom:2px solid #1e3a8a;padding-bottom:10px';
   sub.textContent = new Date().toLocaleDateString('he-IL') + ' · עוזר הכתיבה';
-  var pre = document.createElement('div');
-  pre.style.cssText = 'white-space:pre-wrap;word-wrap:break-word';
-  pre.textContent = body || '';
-  page.appendChild(h); page.appendChild(sub); page.appendChild(pre);
+  w.appendChild(h); w.appendChild(sub);
+  return w;
+}
 
-  document.body.appendChild(pdfHolder(page));
+function pdfPara(text){
+  var d = document.createElement('div');
+  if(!String(text).trim()){ d.style.cssText = 'height:.9em'; return d; }
+  d.style.cssText = 'white-space:pre-wrap;word-wrap:break-word';
+  d.textContent = text;
+  return d;
+}
+
+/* פסקה שגבוהה מעמוד שלם מפוצלת בגבול מילה. בלי זה היא נכנסת לעמוד
+   ריק, חורגת, ונחתכת ב-overflow — כלומר מלל נעלם בשקט. */
+function pdfSplitPara(pg, block){
+  var words = String(block.textContent || '').split(/(\s+)/);
+  var d = pdfPara('x');
+  pg.appendChild(d);
+  var i = 0, fit = '';
+  while(i < words.length){
+    d.textContent = fit + words[i];
+    if(pg.scrollHeight > pg.clientHeight + 1) break;
+    fit += words[i]; i++;
+  }
+  if(i === 0){ fit = words[0] || ''; i = 1; }   /* תמיד להתקדם */
+  d.textContent = fit;
+  if(i >= words.length) return null;
+  return pdfPara(words.slice(i).join('').replace(/^\s+/, ''));
+}
+
+/* חלוקת הטקסט לעמודים: מוסיפים פסקה, ואם העמוד חרג — מחזירים אותה
+   ופותחים עמוד חדש. ההכרעה היא scrollHeight של העמוד עצמו, כלומר
+   מה שהדפדפן באמת סידר, ולא חישוב גבהים משלנו. */
+function pdfPaginate(title, body){
+  var host = pdfHolder();
+  document.body.appendChild(host);
+  var blocks = [], raw = String(body == null ? '' : body).split('\n'), k;
+  for(k = 0; k < raw.length; k++) blocks.push(pdfPara(raw[k]));
+  if(!blocks.length) blocks.push(pdfPara(''));
+
+  var pages = [], bi = 0, first = true, guard = 0;
+  while(bi < blocks.length && guard++ < 600){
+    var pg = pdfPageEl();
+    host.appendChild(pg);
+    if(first){ pg.appendChild(pdfHead(title)); first = false; }
+    var put = 0;
+    while(bi < blocks.length){
+      var b = blocks[bi];
+      pg.appendChild(b);
+      if(pg.scrollHeight > pg.clientHeight + 1){
+        pg.removeChild(b);
+        if(put === 0){
+          var rest = pdfSplitPara(pg, b);
+          if(rest){ blocks[bi] = rest; } else { bi++; }
+        }
+        break;
+      }
+      bi++; put++;
+    }
+    pages.push(pg);
+  }
+  return { host: host, pages: pages };
+}
+
+/* מספור רק מעל שני עמודים — על דף אחד או שניים זה רעש. היושב בתוך
+   התמונה ולא ב-jsPDF, ולכן אין צורך בגופן עברי מוטבע. */
+function pdfNumber(pages){
+  if(pages.length < 3) return;
+  for(var i = 0; i < pages.length; i++){
+    var f = document.createElement('div');
+    f.style.cssText = 'position:absolute;bottom:14px;left:0;right:0;' +
+                      'text-align:center;font-size:11px;color:#888';
+    f.textContent = 'עמוד ' + (i + 1) + ' מתוך ' + pages.length;
+    pages[i].appendChild(f);
+  }
+}
+
+function savePdf(title, body, btn){
+  var old = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
+  var ttl = title || 'עוזר הכתיבה';
+  var name = ttl.replace(/[\\\/:*?"<>|]/g, ' ').substring(0, 60) + '.pdf';
 
   function done(){
     pdfCleanup();
@@ -925,29 +1027,68 @@ function savePdf(title, body, btn){
   }
 
   return loadScript(CDN.html2pdf).then(function(){
-    var name = (title || 'עוזר הכתיבה').replace(/[\\\/:*?"<>|]/g, ' ').substring(0, 60) + '.pdf';
-    return window.html2pdf().set(pdfOpts(name)).from(page).save().then(done);
+    var P = pdfPaginate(ttl, body);
+    pdfNumber(P.pages);
+    var opts = pdfOpts(name), pdf = null, i = 0;
+
+    function step(){
+      if(i >= P.pages.length) return Promise.resolve();
+      if(btn && P.pages.length > 1){
+        btn.textContent = 'מכין… ' + (i + 1) + '/' + P.pages.length;
+      }
+      var pg = P.pages[i];
+      if(i === 0){
+        return window.html2pdf().set(opts).from(pg).toPdf().get('pdf')
+          .then(function(d){
+            pdf = d;
+            /* הגנה על העיגול: עמוד עודף וריק נמחק. */
+            var n = pdf.internal.getNumberOfPages();
+            while(n > 1){ pdf.deletePage(n); n--; }
+            i++; return step();
+          });
+      }
+      return window.html2pdf().set(opts).from(pg).toCanvas().get('canvas')
+        .then(function(cv){
+          pdf.addPage();
+          pdf.addImage(cv.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0,
+                       pdf.internal.pageSize.getWidth(),
+                       pdf.internal.pageSize.getHeight());
+          i++; return step();
+        });
+    }
+
+    return step().then(function(){
+      pdf.save(name);
+      done();
+    });
   }).catch(function(){
     done();
     window.print();
   });
 }
 
-/* ---------- שתי המלכודות של html2pdf, ושתיהן עלו כאן בפועל ----------
+/* ---------- שלוש המלכודות של html2pdf, וכולן עלו כאן בפועל ----------
 
    1. **`left:-9999px` מפיק PDF ריק.** html2canvas מצלם לפי מיקום
       בדף, ואלמנט שיושב רחוק משדה הראייה יוצא דף לבן — זה מה שקרה
-      למשתמש במערך השיעור. העמוד חייב לשבת בתוך הדף; מה שמסתיר אותו
-      הוא `opacity:0` ו-`z-index` שלילי, לא מיקום מחוץ למסך.
+      למשתמש במערך השיעור. העמוד חייב לשבת בתוך הדף.
    2. **גלילה.** אם הדף גלול, הצילום נחתך. `scrollX/scrollY = 0`
-      ו-`windowWidth` מקובעים מונעים את זה.                       */
+      ו-`windowWidth` מקובעים מונעים את זה.
+   3. **קנבס ארוך מדי מוחזר לבן בשקט בטלפון** — ראה למעלה. לכן
+      הצילום הוא עמוד-עמוד.
+
+   ה-holder עצמו הוא בגודל אפס עם `overflow:hidden`: כך עמוד של
+   868px אינו מייצר גלילה אופקית במסך של טלפון. נמדד שזה אינו פוגע
+   בצילום — html2canvas משכפל את האלמנט למסמך נפרד ומצלם שם, ולכן
+   חיתוך של אלמנט האב אינו חל עליו.                               */
 var _pdfHold = null;
 function pdfHolder(page){
   pdfCleanup();
   var hold = document.createElement('div');
   hold.style.cssText = 'position:absolute;top:0;left:0;z-index:-1;opacity:0;' +
-                       'pointer-events:none;width:794px;overflow:hidden;background:#fff';
-  hold.appendChild(page);
+                       'pointer-events:none;width:0;height:0;overflow:hidden;' +
+                       'background:#fff';
+  if(page) hold.appendChild(page);
   _pdfHold = hold;
   return hold;
 }
@@ -961,7 +1102,7 @@ function pdfOpts(name){
     filename: name,
     image: { type: 'jpeg', quality: 0.96 },
     html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff',
-                   scrollX: 0, scrollY: 0, windowWidth: 820, logging: false },
+                   scrollX: 0, scrollY: 0, windowWidth: 980, logging: false },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
     pagebreak: { mode: ['css', 'legacy'] }
   };
@@ -1370,14 +1511,27 @@ window.addEventListener('unhandledrejection', function(ev){
 
 /* ---------- קובץ מצורף ---------- */
 var PICKED = null;           /* {name, text} או {name, image:{mime,data}} */
+/* הקבצים הגולמיים. סריקה ודחיסה עובדות על הקובץ עצמו ולא על טקסט
+   שחולץ ממנו, ולכן הן צריכות את ה-File ולא את התוצאה של extractFile. */
+var PICKED_FILES = null;
 $('pick').onclick = function(){ $('file').click(); };
 $('clrFile').onclick = function(){
-  PICKED = null; $('file').value = '';
+  PICKED = null; PICKED_FILES = null; $('file').value = '';
   $('clrFile').classList.add('hide'); note('fileNote','','');
 };
 $('file').onchange = function(){
   var f = this.files && this.files[0];
   if(!f) return;
+  PICKED_FILES = this.files;
+  /* בשני המצבים האלה אין מה לחלץ: הקובץ עצמו הוא החומר. חילוץ טקסט
+     מ-PDF של 40 עמודים לפני דחיסה הוא המתנה ארוכה לשווא. */
+  if(S.mode === 'scan' || S.mode === 'squeeze'){
+    PICKED = null;
+    note('fileNote','ok','צורף: ' + (this.files.length > 1 ?
+      this.files.length + ' קבצים' : f.name));
+    $('clrFile').classList.remove('hide');
+    return;
+  }
   note('fileNote','warn','קורא את "' + f.name + '"…');
   extractFile(f, function(msg){ note('fileNote','warn',msg); })
   .then(function(r){
@@ -1433,6 +1587,298 @@ function askGeminiImage(key, system, text, img){
   return tryOne();
 }
 
+/* ==== BEGIN tools_client ==== */
+/* ============================================================
+   שלוש היכולות שהיו חסרות באפליקציה מול בוט הטקסטים, וכל אחת
+   נבנתה כאן בדרך עוקפת כי הדרך של הבוט אינה קיימת בדפדפן.
+   (16/11/26, בקשת המשתמש: "אין עדיין 16 כפתורים, תכניס אותם
+   באופן חכם, עוקף ויצירתי")
+
+   ⚖️ פסקי דין   — האתר חסום ב-CORS, ולכן דרך שער הקריאה הציבורי.
+   📄 סריקת מסמך — אין scikit-image בדפדפן, ולכן חיתוך לפי היטל דיו
+                   וניקוי על קנבס. הצילום לא עוזב את המכשיר.
+   🗜️ דחיסת דפים — pdf.js מרנדר, jsPDF מניח כמה עמודים על דף.
+
+   שלושתן רצות במכשיר ואינן עולות מכסה.
+   ============================================================ */
+
+/* ---------- בניית PDF מתמונות מוכנות ----------
+   אין ל-html2pdf.bundle גלובל של jsPDF (נמדד: window.jspdf הוא
+   undefined), ולכן אובייקט ה-PDF מתקבל מה-worker של html2pdf על עמוד
+   לבן, ומשם ממשיכים ידנית. זה אותו מסלול שעובד ב-savePdf. */
+function pdfBlank(land){
+  var d = document.createElement('div');
+  d.style.cssText = 'width:' + (land ? PG_H : PG_W) + 'px;height:' +
+                    (land ? PG_W : PG_H) + 'px;background:#fff';
+  var hold = pdfHolder(d);
+  document.body.appendChild(hold);
+  var o = pdfOpts('x.pdf');
+  if(land) o.jsPDF = { unit: 'mm', format: 'a4', orientation: 'landscape' };
+  return window.html2pdf().set(o).from(d).toPdf().get('pdf').then(function(pdf){
+    pdfCleanup();
+    var n = pdf.internal.getNumberOfPages();
+    while(n > 1){ pdf.deletePage(n); n--; }   /* עמוד עודף מעיגול */
+    return pdf;
+  });
+}
+
+function pdfFromImages(urls, name, land){
+  if(!urls.length) return Promise.reject(new Error('אין עמודים.'));
+  return pdfBlank(land).then(function(pdf){
+    var W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
+    for(var i = 0; i < urls.length; i++){
+      if(i) pdf.addPage();
+      pdf.addImage(urls[i], 'JPEG', 0, 0, W, H);
+    }
+    pdf.save(name);
+    return urls.length;
+  });
+}
+
+/* ================= ⚖️ פסקי דין חושן משפט ================= */
+
+var PSAK_BASE = 'https://www.psakim.org';
+
+/* השער מחזיר Markdown, ולכן כל תוצאה היא `[טקסט](קישור)` שבו הטקסט
+   מכיל "בית דין:", "מס. סידורי:" ו-"תקציר:". נמדד מול האתר החי. */
+function psakParse(md){
+  var out = [], rx = /\[([^\]]{20,})\]\((https?:\/\/[^)]*?\/Psakim\/File\/(\d+)[^)]*)\)/g, m;
+  while((m = rx.exec(md))){
+    var t = m[1].replace(/\s+/g, ' ').trim();
+    var beis = (/בית דין:\s*([^]]*?)\s*מס\. סידורי:/.exec(t) || [, ''])[1];
+    var num = (/מס\. סידורי:\s*(\d+)/.exec(t) || [, m[3]])[1];
+    var abs = (/תקציר:\s*([\s\S]*)$/.exec(t) || [, ''])[1];
+    var title = t.split('בית דין:')[0].trim() || ('פסק ' + num);
+    out.push({ title: title, beis: beis.trim(), num: num,
+               abs: abs.trim(), url: PSAK_BASE + '/Psakim/File/' + num });
+    if(out.length >= 15) break;
+  }
+  return out;
+}
+
+function psakTotal(md){
+  var m = /נמצאו\s+([\d,]+)\s+פסקי/.exec(md);
+  return m ? m[1] : '';
+}
+
+function psakSearch(query, say){
+  var q = String(query || '').trim();
+  if(!q) return Promise.reject(new Error('צריך נושא לחיפוש.'));
+  var url = PSAK_BASE + '/psakim/Resaults?betdin=&dayan=&fromDate=&toDate=' +
+            '&text=' + encodeURIComponent(q) + '&searchin=all&number=';
+  if(say) say('מחפש במאגר פסקי הדין…');
+  return readLink(url).then(function(md){
+    if(!md) throw new Error(
+      'מאגר פסקי הדין לא נענה כרגע. אפשר לנסות שוב בעוד דקה.');
+    var rows = psakParse(md);
+    if(!rows.length) throw new Error(
+      'לא נמצאו פסקי דין בנושא הזה. אפשר לנסות מילה אחרת, למשל "שכירות" או "נזק".');
+    return { rows: rows, total: psakTotal(md), query: q };
+  });
+}
+
+/* ================= 📄 סריקת מסמך ================= */
+
+var SCAN_MAX = 1700;            /* רוחב עבודה — מעליו הטלפון נחנק */
+
+function scanLoad(file){
+  return new Promise(function(res, rej){
+    var u = URL.createObjectURL(file);
+    var im = new Image();
+    im.onload = function(){ URL.revokeObjectURL(u); res(im); };
+    im.onerror = function(){ URL.revokeObjectURL(u); rej(new Error('התמונה לא נפתחה.')); };
+    im.src = u;
+  });
+}
+
+/* אחוזון מתוך היסטוגרמה של בהירות — כך מוצאים את "הרקע" ואת "הדיו"
+   בלי להסתמך על סף קבוע, שמשתנה עם התאורה בחדר. */
+function scanPct(hist, total, p){
+  var want = total * p, sum = 0;
+  for(var i = 0; i < 256; i++){
+    sum += hist[i];
+    if(sum >= want) return i;
+  }
+  return 255;
+}
+
+/* חיתוך שוליים לפי היטל: שורה או עמודה שאין בה כמעט דיו היא שוליים.
+   זו החלופה הזולה לזיהוי גבולות דף, ועובדת כשהדף מצולם בלי זווית
+   גדולה. אם לא נמצא דיו בכלל - לא חותכים כלום, כדי לא למחוק תמונה. */
+function scanClean(im){
+  var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
+  var k = Math.min(1, SCAN_MAX / Math.max(w, h));
+  var cw = Math.max(1, Math.round(w * k)), ch = Math.max(1, Math.round(h * k));
+  var c = document.createElement('canvas');
+  c.width = cw; c.height = ch;
+  var x = c.getContext('2d');
+  x.drawImage(im, 0, 0, cw, ch);
+  var d = x.getImageData(0, 0, cw, ch), px = d.data;
+
+  var hist = new Float64Array(256), lum = new Uint8Array(cw * ch), i, j;
+  for(i = 0, j = 0; i < px.length; i += 4, j++){
+    var v = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000 | 0;
+    lum[j] = v; hist[v]++;
+  }
+  var bg = scanPct(hist, cw * ch, 0.80);      /* הנייר   */
+  var ink = scanPct(hist, cw * ch, 0.03);     /* הכתב    */
+  var cut = Math.max(0, bg - Math.max(28, (bg - ink) * 0.45));
+
+  var rows = new Int32Array(ch), cols = new Int32Array(cw), r, cc;
+  for(r = 0; r < ch; r++){
+    for(cc = 0; cc < cw; cc++){
+      if(lum[r * cw + cc] < cut){ rows[r]++; cols[cc]++; }
+    }
+  }
+  function edge(arr, len, need, back){
+    var s = back ? len - 1 : 0, step = back ? -1 : 1;
+    for(var t = 0; t < len; t++){
+      var p = s + step * t;
+      if(arr[p] >= need) return p;
+    }
+    return back ? len - 1 : 0;
+  }
+  var x0 = edge(cols, cw, Math.max(2, cw * 0.006), false);
+  var x1 = edge(cols, cw, Math.max(2, cw * 0.006), true);
+  var y0 = edge(rows, ch, Math.max(2, cw * 0.004), false);
+  var y1 = edge(rows, ch, Math.max(2, cw * 0.004), true);
+  var pad = Math.round(Math.max(cw, ch) * 0.012);
+  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
+  x1 = Math.min(cw - 1, x1 + pad); y1 = Math.min(ch - 1, y1 + pad);
+  if(x1 - x0 < cw * 0.25 || y1 - y0 < ch * 0.25){
+    x0 = 0; y0 = 0; x1 = cw - 1; y1 = ch - 1;      /* לא נמצא דף */
+  }
+
+  /* נרמול: הנייר ללבן מלא, הכתב לשחור, וכל מה שביניהם נמתח. זה מה
+     שמעלים צללים ופסי תאורה בצילום טלפון. */
+  var ow = x1 - x0 + 1, oh = y1 - y0 + 1;
+  var o = document.createElement('canvas');
+  o.width = ow; o.height = oh;
+  var ox = o.getContext('2d');
+  var od = ox.createImageData(ow, oh), op = od.data;
+  var lo = ink, hi = Math.max(lo + 12, bg - 4), span = hi - lo;
+  for(r = 0; r < oh; r++){
+    for(cc = 0; cc < ow; cc++){
+      var v2 = lum[(r + y0) * cw + (cc + x0)];
+      var t2 = (v2 - lo) / span;
+      t2 = t2 < 0 ? 0 : (t2 > 1 ? 1 : t2);
+      t2 = Math.pow(t2, 0.72);                   /* מחשיך את הכתב */
+      var g = Math.round(t2 * 255);
+      var q = (r * ow + cc) * 4;
+      op[q] = op[q + 1] = op[q + 2] = g; op[q + 3] = 255;
+    }
+  }
+  ox.putImageData(od, 0, 0);
+  return o;
+}
+
+/* הנחת העמוד הסרוק על דף A4 לבן, ביחס שמור ובמרכז. */
+function scanToPage(src){
+  var pw = PG_W, ph = PG_H;
+  var c = document.createElement('canvas');
+  c.width = pw; c.height = ph;
+  var x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, pw, ph);
+  var m = Math.round(pw * 0.03);
+  var k = Math.min((pw - 2 * m) / src.width, (ph - 2 * m) / src.height);
+  var dw = src.width * k, dh = src.height * k;
+  x.imageSmoothingQuality = 'high';
+  x.drawImage(src, (pw - dw) / 2, (ph - dh) / 2, dw, dh);
+  return c.toDataURL('image/jpeg', 0.92);
+}
+
+function scanDocs(files, say){
+  var list = [].slice.call(files || []).filter(function(f){
+    return /^image\//.test(f.type) || /\.(jpe?g|png|webp|bmp|heic)$/i.test(f.name || '');
+  });
+  if(!list.length) return Promise.reject(new Error(
+    'צריך לצרף צילום של דף (תמונה). ל-PDF קיים יש את "דחיסת דפים".'));
+  var urls = [], i = 0;
+  function step(){
+    if(i >= list.length) return Promise.resolve(urls);
+    if(say) say('סורק ' + (i + 1) + '/' + list.length + '…');
+    return scanLoad(list[i]).then(function(im){
+      urls.push(scanToPage(scanClean(im)));
+      i++;
+      return step();
+    });
+  }
+  return loadScript(CDN.html2pdf).then(step).then(function(){
+    return pdfFromImages(urls, 'סריקה.pdf', false).then(function(){
+      return { pages: urls.length };
+    });
+  });
+}
+
+/* ================= 🗜️ דחיסת דפים ================= */
+
+/* אין נגיעה בטקסט: pdf.js מרנדר כל עמוד כתמונה, ואנחנו רק מניחים
+   כמה תמונות על דף אחד. אותו עיקרון של squeeze.py בבוט - דחיסה
+   גאומטרית, לא קיצור מילים. */
+function squeezePdf(file, per, say){
+  per = (per === 4) ? 4 : 2;
+  var land = (per === 2);                /* שניים זה לצד זה = דף לרוחב */
+  return Promise.all([pdfjsReady(), readAsBuffer(file),
+                      loadScript(CDN.html2pdf)]).then(function(a){
+    var pdfjs = a[0];
+    return pdfjs.getDocument({ data: new Uint8Array(a[1]) }).promise;
+  }).then(function(doc){
+    var n = doc.numPages;
+    var sheetW = land ? PG_H : PG_W, sheetH = land ? PG_W : PG_H;
+    var cols = 2, rows = (per === 2) ? 1 : 2;
+    var cellW = sheetW / cols, cellH = sheetH / rows;
+    var urls = [], sheet = null, sx = null, slot = 0, i = 1;
+
+    function newSheet(){
+      sheet = document.createElement('canvas');
+      sheet.width = sheetW; sheet.height = sheetH;
+      sx = sheet.getContext('2d');
+      sx.fillStyle = '#fff'; sx.fillRect(0, 0, sheetW, sheetH);
+      slot = 0;
+    }
+    function flush(){
+      if(sheet && slot) urls.push(sheet.toDataURL('image/jpeg', 0.9));
+      sheet = null;
+    }
+    function step(){
+      if(i > n){ flush(); return Promise.resolve(); }
+      if(say) say('דוחס ' + i + '/' + n + '…');
+      return doc.getPage(i).then(function(pg){
+        var v1 = pg.getViewport({ scale: 1 });
+        /* עמוד לרוחב במסמך המקור יושב בתא שהוא לרוחב ממילא, ולכן
+           אין כאן סיבוב - רק התאמה ליחס התא. */
+        var k = Math.min((cellW * 0.96) / v1.width, (cellH * 0.96) / v1.height);
+        var vp = pg.getViewport({ scale: k });
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(vp.width));
+        c.height = Math.max(1, Math.round(vp.height));
+        return pg.render({ canvasContext: c.getContext('2d'),
+                           viewport: vp }).promise.then(function(){
+          if(!sheet) newSheet();
+          var cx = (slot % cols), cy = Math.floor(slot / cols);
+          /* עברית: העמוד הראשון בצד ימין, כמו בחוברת מודפסת. */
+          var right = cols - 1 - cx;
+          sx.drawImage(c, right * cellW + (cellW - c.width) / 2,
+                       cy * cellH + (cellH - c.height) / 2);
+          slot++;
+          if(slot >= per) flush();
+          i++;
+          return step();
+        });
+      });
+    }
+    newSheet();
+    return step().then(function(){
+      var name = ((file.name || 'מסמך').replace(/\.pdf$/i, '')) +
+                 ' - דחוס.pdf';
+      return pdfFromImages(urls, name, land).then(function(){
+        return { src: n, out: urls.length, per: per };
+      });
+    });
+  });
+}
+
+/* ==== END tools_client ==== */
 /* ---------- הרצה ---------- */
 $('go').onclick = function(){
   var raw = $('txt').value.trim();
@@ -1495,6 +1941,87 @@ $('go').onclick = function(){
     return;
   }
 
+  /* ---------- שלושת המצבים שרצים כולם במכשיר (16/11/26) ----------
+     סריקה, דחיסה וחיפוש פסקי דין אינם משימת שפה, ולכן הם יוצאים
+     מהמסלול לפני בקשת הכרטיס — בלי מודל, בלי מכסה ובלי מפתח. */
+  function localDone(mode, msg){
+    call({api:'done', token:S.token, mode:mode, via:'מקומי (בלי מכסה)'});
+    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    if(msg) note('err','ok',msg);
+  }
+  function localFail(e){
+    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    note('err','bad',(e && e.message) || 'לא הצלחתי.');
+  }
+  function say2(m){ $('goTxt').innerHTML = '<span class="spin"></span> ' + m; }
+
+  if(S.mode === 'scan'){
+    if(!PICKED_FILES || !PICKED_FILES.length){
+      b.disabled = false; $('goTxt').textContent = 'הפעל';
+      note('err','warn','צריך לצרף צילום של דף. לחץ על "📎 צרף קובץ".');
+      return;
+    }
+    scanDocs(PICKED_FILES, say2).then(function(r){
+      localDone('scan', 'נסרקו ' + r.pages + ' עמודים. הקובץ הורד.');
+    }).catch(localFail);
+    return;
+  }
+
+  if(S.mode === 'squeeze'){
+    var sf = PICKED_FILES && PICKED_FILES[0];
+    if(!sf || !/\.pdf$/i.test(sf.name || '')){
+      b.disabled = false; $('goTxt').textContent = 'הפעל';
+      note('err','warn','צריך לצרף קובץ PDF. לצילום של דף יש את "סריקת מסמך".');
+      return;
+    }
+    /* "4" בשדה הטקסט = ארבעה עמודים על דף. ברירת המחדל שניים, שהיא
+       הדחיסה שנשארת קריאה בהדפסה רגילה. */
+    var per = /(^|\D)4(\D|$)/.test(raw) ? 4 : 2;
+    squeezePdf(sf, per, say2).then(function(r){
+      localDone('squeeze', r.src + ' עמודים נדחסו ל-' + r.out +
+        ' דפים (' + r.per + ' על דף). הקובץ הורד.');
+    }).catch(localFail);
+    return;
+  }
+
+  if(S.mode === 'psakdin'){
+    psakSearch(raw, say2).then(function(r){
+      var h = '<div class="result"><div class="meta noprint">' +
+        '<span class="pill">⚖️ פסקי דין</span><span>' +
+        (r.total ? r.total + ' פסקים במאגר · ' : '') +
+        'מוצגים ' + r.rows.length + ' · בלי מכסה</span></div><div class="out">';
+      for(var i = 0; i < r.rows.length; i++){
+        var p = r.rows[i];
+        h += '<div style="margin:0 0 16px;padding:0 0 14px;' +
+             'border-bottom:1px solid var(--line)">' +
+             '<div style="font-weight:700">' + esc(p.title) + '</div>' +
+             (p.beis ? '<div style="font-size:13px;color:var(--muted)">' +
+                       esc(p.beis) + ' · מס\' ' + esc(p.num) + '</div>' : '') +
+             (p.abs ? '<div style="margin:6px 0">' + esc(p.abs) + '</div>' : '') +
+             '<a href="' + esc(p.url) + '" target="_blank" rel="noopener">' +
+             'לפסק המלא ↗</a>' +
+             ' · <button class="mini psakLesson" data-u="' + esc(p.url) +
+             '">דף לכיתה</button></div>';
+      }
+      h += '</div></div>';
+      $('resultBox').innerHTML = h;
+      /* "דף לכיתה" מעביר את הפסק למצב דף המקורות — שם הוא נקרא
+         במלואו ונבנה ממנו שיעור. כך החיפוש נשאר חינמי, והמודל נכנס
+         רק על הפסק שנבחר. */
+      var bs = document.querySelectorAll('.psakLesson');
+      for(var j = 0; j < bs.length; j++){
+        bs[j].onclick = function(){
+          setMode('psak');
+          $('txt').value = this.getAttribute('data-u');
+          $('go').click();
+        };
+      }
+      localDone('psakdin', '');
+      $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+    }).catch(localFail);
+    return;
+  }
+
   if(S.mode === 'luz'){
     b.disabled = false; $('goTxt').textContent = 'הפעל';
     var ld = luzParse(raw);
@@ -1522,6 +2049,24 @@ $('go').onclick = function(){
     if(PICKED && PICKED.text){
       srcNote = 'מתוך הקובץ ' + PICKED.name;
       return raw ? (raw + '\n\n' + PICKED.text) : PICKED.text;
+    }
+
+    /* 📚 דף מקורות לכיתה: הפסק עצמו הוא החומר, והוא נקרא מהמאגר דרך
+       שער הקריאה. מספר סידורי לבדו הופך לכתובת — זה מה שהמשתמש מקבל
+       מכפתור "דף לכיתה" ברשימת פסקי הדין, וגם מה שנוח להקליד. */
+    if(S.mode === 'psak'){
+      var pu = /^\d{1,6}$/.test(raw) ? (PSAK_BASE + '/Psakim/File/' + raw)
+                                     : (isLink ? raw : '');
+      if(!pu) throw new Error(
+        'צריך קישור לפסק דין מ-psakim.org, או את המספר הסידורי שלו. ' +
+        'אפשר למצוא פסק בכפתור "פסקי דין חושן משפט".');
+      say('קורא את פסק הדין…');
+      return readLink(pu).then(function(t3){
+        if(!t3) throw new Error('לא הצלחתי לקרוא את הפסק. נסה שוב בעוד דקה.');
+        srcNote = 'מתוך פסק הדין במאגר';
+        return 'להלן פסק הדין במלואו, והוא החומר היחיד. אל תוסיף מקורות ' +
+               'או עובדות מהזיכרון שלך.\n\n' + t3;
+      });
     }
 
     /* ספריא: מראה מקום ("סימן קפד יורה דעה") או קישור לספריא מביאים
