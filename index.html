@@ -2153,6 +2153,11 @@ $('go').onclick = function(){
 
   var isLink = /^https?:\/\/\S+$/.test(raw);
   var ticket = null, srcNote = '';
+  /* שורת ההתקדמות מוגדרת כאן, בהיקף של כל ההרצה, ולא בתוך חוליה אחת
+     של השרשרת: היא נקראת גם בשלב הבאת החומר וגם בשלב הפנייה למנוע,
+     ואלה שתי פונקציות נפרדות. כשהיא ישבה בפנימית, השלב השני נפל על
+     "say is not defined" — כלומר כל הרצה רגילה נשברה. */
+  function say(msg){ $('goTxt').innerHTML = '<span class="spin"></span> ' + msg; }
 
   /* 🗓️ לוח זמנים רץ **כאן ועכשיו**, בלי שרת ובלי מודל ובלי מכסה —
      בדיוק כמו בבוט הטקסטים, שם המנתח חינמי והעיצוב נעשה בדפדפן.
@@ -2302,7 +2307,6 @@ $('go').onclick = function(){
       throw new Error(t.error || 'שגיאה');
     }
     ticket = t;
-    function say(msg){ $('goTxt').innerHTML = '<span class="spin"></span> ' + msg; }
 
     /* קובץ מצורף קודם לכל: הוא החומר שהמשתמש בחר במפורש. */
     if(PICKED && PICKED.image){ srcNote = 'מתוך הקובץ ' + PICKED.name; return ''; }
