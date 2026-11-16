@@ -1702,9 +1702,13 @@ function scanPct(hist, total, p){
   return 255;
 }
 
-/* חיתוך שוליים לפי היטל: שורה או עמודה שאין בה כמעט דיו היא שוליים.
-   זו החלופה הזולה לזיהוי גבולות דף, ועובדת כשהדף מצולם בלי זווית
-   גדולה. אם לא נמצא דיו בכלל - לא חותכים כלום, כדי לא למחוק תמונה. */
+/* חיתוך לגבולות הדף לפי היטל **נייר** ולא לפי היטל דיו.
+   16/11/26 — הגרסה הראשונה חיפשה שורות ועמודות שאין בהן דיו, ונמדד
+   שהיא לא חותכת כלום: רקע השולחן הכהה שמסביב לדף כהה מהסף, כלומר
+   נחשב "דיו" בכל שורה ובכל עמודה. ההיפוך פותר את זה מעיקרו — מחפשים
+   את האזור הבהיר הרצוף, שהוא הנייר. אם כל התמונה בהירה (דף שצולם
+   ממלא מסך) לא נחתך כלום, וזה הנכון.
+   אם לא נמצא דף סביר - לא חותכים, כדי לא למחוק חצי תמונה. */
 function scanClean(im){
   var w = im.naturalWidth || im.width, h = im.naturalHeight || im.height;
   var k = Math.min(1, SCAN_MAX / Math.max(w, h));
@@ -1720,16 +1724,17 @@ function scanClean(im){
     var v = (px[i] * 299 + px[i + 1] * 587 + px[i + 2] * 114) / 1000 | 0;
     lum[j] = v; hist[v]++;
   }
-  var bg = scanPct(hist, cw * ch, 0.80);      /* הנייר   */
-  var ink = scanPct(hist, cw * ch, 0.03);     /* הכתב    */
-  var cut = Math.max(0, bg - Math.max(28, (bg - ink) * 0.45));
+  var bg = scanPct(hist, cw * ch, 0.90);      /* הנייר   */
+  /* סף הנייר: בהיר כמו הנייר, עם מרווח לצל ולהפרשי תאורה. */
+  var paper = Math.max(40, bg - 52);
 
   var rows = new Int32Array(ch), cols = new Int32Array(cw), r, cc;
   for(r = 0; r < ch; r++){
     for(cc = 0; cc < cw; cc++){
-      if(lum[r * cw + cc] < cut){ rows[r]++; cols[cc]++; }
+      if(lum[r * cw + cc] >= paper){ rows[r]++; cols[cc]++; }
     }
   }
+  /* שורה שייכת לדף אם שליש ממנה נייר. פחות מזה - זה השולחן. */
   function edge(arr, len, need, back){
     var s = back ? len - 1 : 0, step = back ? -1 : 1;
     for(var t = 0; t < len; t++){
@@ -1738,16 +1743,22 @@ function scanClean(im){
     }
     return back ? len - 1 : 0;
   }
-  var x0 = edge(cols, cw, Math.max(2, cw * 0.006), false);
-  var x1 = edge(cols, cw, Math.max(2, cw * 0.006), true);
-  var y0 = edge(rows, ch, Math.max(2, cw * 0.004), false);
-  var y1 = edge(rows, ch, Math.max(2, cw * 0.004), true);
-  var pad = Math.round(Math.max(cw, ch) * 0.012);
-  x0 = Math.max(0, x0 - pad); y0 = Math.max(0, y0 - pad);
-  x1 = Math.min(cw - 1, x1 + pad); y1 = Math.min(ch - 1, y1 + pad);
+  var x0 = edge(cols, cw, ch * 0.33, false);
+  var x1 = edge(cols, cw, ch * 0.33, true);
+  var y0 = edge(rows, ch, cw * 0.33, false);
+  var y1 = edge(rows, ch, cw * 0.33, true);
   if(x1 - x0 < cw * 0.25 || y1 - y0 < ch * 0.25){
     x0 = 0; y0 = 0; x1 = cw - 1; y1 = ch - 1;      /* לא נמצא דף */
   }
+
+  /* הדיו נמדד **בתוך** הדף בלבד. מדידה על כל התמונה הייתה לוקחת את
+     הצבע הכהה של השולחן כ"כתב", והנרמול היה מבהיר את הכתב האמיתי. */
+  var ih = new Float64Array(256), cnt = 0, rr, c2;
+  for(rr = y0; rr <= y1; rr++){
+    for(c2 = x0; c2 <= x1; c2++){ ih[lum[rr * cw + c2]]++; cnt++; }
+  }
+  bg = scanPct(ih, cnt, 0.85);
+  var ink = scanPct(ih, cnt, 0.03);
 
   /* נרמול: הנייר ללבן מלא, הכתב לשחור, וכל מה שביניהם נמתח. זה מה
      שמעלים צללים ופסי תאורה בצילום טלפון. */
