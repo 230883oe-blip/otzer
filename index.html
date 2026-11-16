@@ -924,9 +924,24 @@ function loadScript(url){
    להגדילו: כל פיקסל מעבר ל-793 נחתך בשקט מצד ימין.             */
 var A4_W  = 793;                                  /* 210mm @96dpi    */
 var A4_H  = 1121;                                 /* 297mm, פחות 1   */
-var PG_PX = 50, PG_PY = 46;                       /* שוליים          */
+/* 16/11/26 — "לא באמת הפי די אף": העיצוב כאן נכתב מחדש ולא נמדד מול
+   בוט הטקסטים, ולכן יצא מסמך אחר - כותרת כחולה עם קו תחתון, כותרת
+   משנה עם תאריך, גופן Segoe UI 15.5px, ובלי בס"ד. כל המספרים למטה
+   לקוחים מ-`text_bot/printpdf.py` ומ-`sheetlib/render.py` (הבס"ד),
+   מומרים מ-pt ומ-mm לפיקסלים ב-96dpi: 1pt = 1.333px, 1mm = 3.7795px. */
+var PG_MT = 49;                                   /* 13mm עליון      */
+var PG_MS = 45;                                   /* 12mm צדדים      */
+var PG_MB = 64;                                   /* 17mm תחתון      */
+var PG_PX = PG_MS;                                /* תאימות לאחור    */
+var PG_PY = PG_MT;
+var PG_FS = 14.67;                                /* 11pt גוף        */
+var PG_LH = 1.25;
+var PG_H1 = 24;                                   /* 18pt כותרת      */
+var PG_H2 = 14.67;                                /* 11pt כותרת משנה */
+var PG_SM = 12;                                   /* 9pt הערות ובס"ד */
+var PG_FONT = 'Arial,Helvetica,"Segoe UI",sans-serif';
 var PG_W  = A4_W;
-var PG_IN = PG_W - PG_PX * 2;                     /* רוחב התוכן      */
+var PG_IN = PG_W - PG_MS * 2;                     /* רוחב התוכן      */
 /* פחות פיקסל: עמוד שגובהו בדיוק 297mm יוצא ב-html2pdf שני עמודים
    בגלל עיגול, והשני ריק. */
 var PG_H  = A4_H;
@@ -936,30 +951,96 @@ function pdfPageEl(){
   d.setAttribute('dir', 'rtl');
   d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
     'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
-    'padding:' + PG_PY + 'px ' + PG_PX + 'px;background:#fff;color:#111;' +
-    'font:15.5px/1.85 "Segoe UI",Arial,sans-serif;direction:rtl;text-align:right';
+    'padding:' + PG_MT + 'px ' + PG_MS + 'px ' + PG_MB + 'px;background:#fff;color:#000;' +
+    'font:' + PG_FS + 'px/' + PG_LH + ' ' + PG_FONT + ';direction:rtl;text-align:right';
   return d;
 }
 
+/* בס"ד בכל עמוד, בשוליים העליונים מימין - בדיוק כמו `sheetlib.render`,
+   שם הוא נכנס לכל PDF של הבוט דרך `@page { @top-right }`. כאן אין
+   `@page` (המסמך מצולם), ולכן הוא ממוקם ידנית באותו מקום ובאותו עיצוב. */
+function pdfBsd(pg){
+  var b = document.createElement('div');
+  b.style.cssText = 'position:absolute;top:' + Math.round(PG_MT / 2.4) + 'px;right:' + PG_MS + 'px;' +
+    'font-family:David,"Times New Roman",serif;font-size:' + PG_SM + 'px;color:#777';
+  b.textContent = 'בס״ד';
+  pg.appendChild(b);
+}
+
+/* הכותרת: שורת טקסט מודגשת 18pt בשחור, בלי קו ובלי מרכוז ובלי תאריך -
+   כך היא בקובץ של הבוט, ושלושת אלה היו כאן ולא שם. */
 function pdfHead(title){
-  var w = document.createElement('div');
   var h = document.createElement('div');
-  h.style.cssText = 'font-size:21px;font-weight:700;margin-bottom:6px;color:#1e3a8a';
-  h.textContent = title || 'עוזר הכתיבה';
-  var sub = document.createElement('div');
-  sub.style.cssText = 'font-size:12px;color:#666;margin-bottom:22px;' +
-    'border-bottom:2px solid #1e3a8a;padding-bottom:10px';
-  sub.textContent = new Date().toLocaleDateString('he-IL') + ' · עוזר הכתיבה';
-  w.appendChild(h); w.appendChild(sub);
-  return w;
+  h.style.cssText = 'font-size:' + PG_H1 + 'px;font-weight:bold;line-height:1.2;margin:0 0 15px';
+  h.textContent = title || '';
+  return h;
+}
+
+/* **מודגש** הוא הסימון היחיד שנתמך, כמו ב-printpdf.py. הטקסט נכנס
+   כ-textContent בכל מקטע, ולכן שום תו מהמקור אינו יכול להפוך לתג. */
+function pdfInline(el, s){
+  var parts = String(s).split(/\*\*(.+?)\*\*/g), i;
+  for(i = 0; i < parts.length; i++){
+    if(!parts[i]) continue;
+    if(i % 2){
+      var b = document.createElement('b');
+      b.textContent = parts[i];
+      el.appendChild(b);
+    } else {
+      el.appendChild(document.createTextNode(parts[i]));
+    }
+  }
 }
 
 function pdfPara(text){
   var d = document.createElement('div');
   if(!String(text).trim()){ d.style.cssText = 'height:.9em'; return d; }
-  d.style.cssText = 'white-space:pre-wrap;word-wrap:break-word';
-  d.textContent = text;
+  d.style.cssText = 'margin:0 0 7.6px;text-align:justify;word-wrap:break-word';
+  pdfInline(d, text);
   return d;
+}
+
+var PDF_NUM_RX = /^\s*(?:[-•*]|\d+[.)]|\(\d+\)|[א-ת][.)]|[א-ת]['׳][.)]?)\s+/;
+
+/* שורה שהיא כותרת פסקה - אותו כלל דטרמיניסטי של printpdf.py:
+   קצרה, בלי סוף משפט, ויש לפניה שורה ריקה. */
+function pdfIsHeading(s, prevBlank){
+  s = String(s).trim();
+  if(!s || !prevBlank || s.length > 70) return false;
+  if(PDF_NUM_RX.test(s)) return false;
+  if('.,;:!?׳״'.indexOf(s.charAt(s.length - 1)) >= 0) return false;
+  return true;
+}
+
+function pdfHeading(text){
+  var d = document.createElement('div');
+  d.style.cssText = 'font-size:' + PG_H2 + 'px;font-weight:bold;margin:13px 0 4.5px';
+  pdfInline(d, String(text).trim());
+  return d;
+}
+
+function pdfBullet(text){
+  var d = document.createElement('div');
+  d.style.cssText = 'margin:0 0 2.3px;padding-inline-start:23px;text-indent:-11px;word-wrap:break-word';
+  pdfInline(d, '• ' + String(text).trim());
+  return d;
+}
+
+/* טקסט רגיל ← רשימת אלמנטים, לפי אותם כללים של `printpdf.to_html`:
+   כותרת פסקה, פריט ברשימה ממוספרת, ופסקה רגילה. עד 16/11/26 כל שורה
+   הייתה div אחד של pre-wrap - כלומר מסמך בלי שום מבנה. */
+function pdfBlocks(body){
+  var raw = String(body == null ? '' : body).replace(/\r\n?/g, '\n').replace(/\n{3,}/g, '\n\n').split('\n');
+  var out = [], prevBlank = true, i;
+  for(i = 0; i < raw.length; i++){
+    var s = raw[i].trim();
+    if(!s){ out.push(pdfPara('')); prevBlank = true; continue; }
+    if(pdfIsHeading(s, prevBlank)) out.push(pdfHeading(s));
+    else if(PDF_NUM_RX.test(s)) out.push(pdfBullet(s.replace(PDF_NUM_RX, '')) );
+    else out.push(pdfPara(s));
+    prevBlank = false;
+  }
+  return out.length ? out : [pdfPara('')];
 }
 
 /* פסקה שגבוהה מעמוד שלם מפוצלת בגבול מילה. בלי זה היא נכנסת לעמוד
@@ -986,15 +1067,14 @@ function pdfSplitPara(pg, block){
 function pdfPaginate(title, body){
   var host = pdfHolder();
   document.body.appendChild(host);
-  var blocks = [], raw = String(body == null ? '' : body).split('\n'), k;
-  for(k = 0; k < raw.length; k++) blocks.push(pdfPara(raw[k]));
-  if(!blocks.length) blocks.push(pdfPara(''));
+  var blocks = pdfBlocks(body);
 
   var pages = [], bi = 0, first = true, guard = 0;
   while(bi < blocks.length && guard++ < 600){
     var pg = pdfPageEl();
     host.appendChild(pg);
-    if(first){ pg.appendChild(pdfHead(title)); first = false; }
+    pdfBsd(pg);
+    if(first){ if(String(title || '').trim()) pg.appendChild(pdfHead(title)); first = false; }
     var put = 0;
     while(bi < blocks.length){
       var b = blocks[bi];
@@ -1020,8 +1100,8 @@ function pdfNumber(pages){
   if(pages.length < 3) return;
   for(var i = 0; i < pages.length; i++){
     var f = document.createElement('div');
-    f.style.cssText = 'position:absolute;bottom:14px;left:0;right:0;' +
-                      'text-align:center;font-size:11px;color:#888';
+    f.style.cssText = 'position:absolute;bottom:' + Math.round(PG_MB / 2.6) + 'px;left:0;right:0;' +
+                      'text-align:center;font-size:' + PG_SM + 'px;color:#666;font-family:' + PG_FONT;
     f.textContent = 'עמוד ' + (i + 1) + ' מתוך ' + pages.length;
     pages[i].appendChild(f);
   }
