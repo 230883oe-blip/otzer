@@ -474,36 +474,83 @@ function withTimeout(p, ms){
   });
 }
 
+/* המפתחות של הכרטיס הנוכחי. נופל רך ל-`key` היחיד, כדי שדפדפן שטרם
+   רענן את הדף וקיבל כרטיס מהגרסה הקודמת ימשיך לעבוד בלי שום שינוי. */
+function tkeys(t){
+  t = t || {};
+  var ks = keyList(t.keys);
+  if(!ks.length && t.key) ks = [t.key];
+  return ks;
+}
+
+/* רשימת המפתחות מהכרטיס. מקבלת גם מחרוזת בודדת, כדי שדפדפן שטרם
+   רענן את הדף וקיבל כרטיס ישן ימשיך לעבוד בדיוק כמו קודם. */
+function keyList(k){
+  if(!k) return [];
+  if(Object.prototype.toString.call(k) === '[object Array]')
+    return k.filter(function(x){ return x && x.length >= 20; });
+  return [k];
+}
+
+/* חסימות קצרות, בזיכרון הלשונית: צמד "מפתח|דגם" שהחזיר 429 אינו
+   מנוסה שוב בדקה הקרובה. זה מה שמונע שכל פנייה חדשה תתחיל שוב מאותו
+   מפתח יבש ותשרוף עליו שלוש שניות. */
+var GKEY_BLOCK = {};
+function gkBlocked(k, m){ return (GKEY_BLOCK[k.slice(-6)+'|'+m] || 0) > Date.now(); }
+function gkBlock(k, m, ms){ GKEY_BLOCK[k.slice(-6)+'|'+m] = Date.now() + ms; }
+
+/* מנוע Gemini עם **מאגר מפתחות**.
+   המכסה החינמית של גוגל נספרת לכל פרויקט, ולכן מפתח נוסף מפרויקט אחר
+   הוא מכסה יומית שלמה נוספת. 429 על מפתח אחד אינו "נגמרה המכסה" אלא
+   "נגמרה המכסה **של המפתח הזה**" — ולכן עוברים מיד למפתח הבא עם אותו
+   דגם, ורק כשכל המפתחות החזירו 429 עוברים לדגם הבא.
+
+   הסדר הזה הוא העיקר: הוא שומר את המשתמש על הדגם האיכותי ביותר כמה
+   שיותר זמן, במקום לרדת לדגם חלש ברגע שמפתח אחד נגמר.                */
 function askGemini(key, system, text, list){
   var models = list || GEMINI_MODELS;
+  var keys = keyList(key);
+  if(!keys.length) return Promise.resolve(null);
   var i = 0;
-  function tryOne(){
+  function nextModel(){
     if(i >= models.length) return Promise.resolve(null);
     var m = models[i++];
-    return withTimeout(fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/'+m+
-      ':generateContent?key='+encodeURIComponent(key),
-      { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          systemInstruction:{parts:[{text:system}]},
-          contents:[{role:'user',parts:[{text:text}]}],
-          /* 16/11/26 — "מערכי שיעור באפליקציה מאד קצרים": 8192 טוקנים הם
-             כ-6,000 מילים באנגלית אבל הרבה פחות בעברית (כל מילה עברית
-             נשברת לכמה טוקנים), ומערך שיעור בן ארבעה עמודים חורג מזה.
-             התקרה אינה עולה כסף - היא רק גבול. */
-          generationConfig:{temperature:0.7,maxOutputTokens:32768}
-        })
-      }).then(function(r){ return r.ok ? r.json() : null; }), 70000)
-    .then(function(d){
-      var parts = d && d.candidates && d.candidates[0] &&
-                  d.candidates[0].content && d.candidates[0].content.parts;
-      var s = '';
-      (parts||[]).forEach(function(p){ s += p.text || ''; });
-      s = s.trim();
-      return s.length > 1 ? {text:s, via:m} : tryOne();
-    }).catch(function(){ return tryOne(); });
+    var j = 0;
+    function nextKey(){
+      if(j >= keys.length) return nextModel();
+      var k = keys[j++];
+      if(gkBlocked(k, m)) return nextKey();
+      return withTimeout(fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/'+m+
+        ':generateContent?key='+encodeURIComponent(k),
+        { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            systemInstruction:{parts:[{text:system}]},
+            contents:[{role:'user',parts:[{text:text}]}],
+            /* 16/11/26 — "מערכי שיעור באפליקציה מאד קצרים": 8192 טוקנים הם
+               כ-6,000 מילים באנגלית אבל הרבה פחות בעברית (כל מילה עברית
+               נשברת לכמה טוקנים), ומערך שיעור בן ארבעה עמודים חורג מזה.
+               התקרה אינה עולה כסף - היא רק גבול. */
+            generationConfig:{temperature:0.7,maxOutputTokens:32768}
+          })
+        }).then(function(r){
+          if(r.status === 429){ gkBlock(k, m, 60000); return {_quota:true}; }
+          if(r.status === 400 || r.status === 403){ gkBlock(k, m, 3600000); return null; }
+          return r.ok ? r.json() : null;
+        }), 70000)
+      .then(function(d){
+        if(d && d._quota) return nextKey();         // מפתח הבא, אותו דגם
+        var parts = d && d.candidates && d.candidates[0] &&
+                    d.candidates[0].content && d.candidates[0].content.parts;
+        var s = '';
+        (parts||[]).forEach(function(p){ s += p.text || ''; });
+        s = s.trim();
+        return s.length > 1 ? {text:s, via:m} : nextKey();
+      }).catch(function(){ return nextKey(); });
+    }
+    return nextKey();
   }
-  return tryOne();
+  return nextModel();
 }
 
 function askFree(system, text){
@@ -1792,33 +1839,50 @@ function askLong(key, system, prompt, say){
   });
 }
 
+/* קריאת דף סרוק. כאן מאגר המפתחות שווה הכי הרבה: המכסה החינמית של
+   גוגל לקריאת תמונות היא הצרה ביותר (כ-20 ביום לפרויקט), וכל מפתח
+   מפרויקט אחר מוסיף מכסה שלמה. 429 → מפתח הבא, אותו דגם. */
 function askGeminiImage(key, system, text, img){
+  var keys = keyList(key);
+  if(!keys.length) return Promise.resolve(null);
   var i = 0;
-  function tryOne(){
+  function nextModel(){
     if(i >= GEMINI_VISION.length) return Promise.resolve(null);
     var m = GEMINI_VISION[i++];
-    return withTimeout(fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/'+m+
-      ':generateContent?key='+encodeURIComponent(key),
-      { method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          systemInstruction:{parts:[{text:system}]},
-          contents:[{role:'user',parts:[
-            {inline_data:{mime_type:img.mime, data:img.data}},
-            {text:text}]}],
-          generationConfig:{temperature:0.4,maxOutputTokens:8192}
-        })
-      }).then(function(r){ return r.ok ? r.json() : null; }), 120000)
-    .then(function(d){
-      var parts = d && d.candidates && d.candidates[0] &&
-                  d.candidates[0].content && d.candidates[0].content.parts;
-      var s = '';
-      (parts||[]).forEach(function(p){ s += p.text || ''; });
-      s = s.trim();
-      return s.length > 1 ? {text:s, via:m+' (קריאת דף)'} : tryOne();
-    }).catch(function(){ return tryOne(); });
+    var j = 0;
+    function nextKey(){
+      if(j >= keys.length) return nextModel();
+      var k = keys[j++];
+      if(gkBlocked(k, m)) return nextKey();
+      return withTimeout(fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/'+m+
+        ':generateContent?key='+encodeURIComponent(k),
+        { method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({
+            systemInstruction:{parts:[{text:system}]},
+            contents:[{role:'user',parts:[
+              {inline_data:{mime_type:img.mime, data:img.data}},
+              {text:text}]}],
+            generationConfig:{temperature:0.4,maxOutputTokens:8192}
+          })
+        }).then(function(r){
+          if(r.status === 429){ gkBlock(k, m, 180000); return {_quota:true}; }
+          if(r.status === 400 || r.status === 403){ gkBlock(k, m, 3600000); return null; }
+          return r.ok ? r.json() : null;
+        }), 120000)
+      .then(function(d){
+        if(d && d._quota) return nextKey();
+        var parts = d && d.candidates && d.candidates[0] &&
+                    d.candidates[0].content && d.candidates[0].content.parts;
+        var s = '';
+        (parts||[]).forEach(function(p){ s += p.text || ''; });
+        s = s.trim();
+        return s.length > 1 ? {text:s, via:m+' (קריאת דף)'} : nextKey();
+      }).catch(function(){ return nextKey(); });
+    }
+    return nextKey();
   }
-  return tryOne();
+  return nextModel();
 }
 
 /* ==== BEGIN tools_client ==== */
@@ -2360,19 +2424,19 @@ $('go').onclick = function(){
     /* סריקה או תמונה: רק דגמי גוגל קוראים תמונה, ולכן אין כאן נפילה
        למנועי הטקסט — תשובה שנכתבה בלי לראות את הדף היא המצאה. */
     if(PICKED && PICKED.image){
-      if(!ticket.key) throw new Error(
+      if(!tkeys(ticket).length) throw new Error(
         'קריאת קובץ סרוק או תמונה דורשת שהמנהל יגדיר מפתח. אפשר להדביק את הטקסט עצמו.');
       var ask = (raw ? raw + '\n\n' : '') +
         'קרא את הדף המצורף במלואו ובצע עליו את המשימה.';
-      return askGeminiImage(ticket.key, ticket.system,
+      return askGeminiImage(tkeys(ticket), ticket.system,
         (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + ask, PICKED.image);
     }
     /* מצב רב-עמודי (מערך שיעור): עמוד בכל פנייה. רק כשהחומר נכנס
        בפנייה אחת - חומר שחורג מפוצל ממילא ב-`askLong`, ופיצול כפול
        היה מכפיל את מספר הפניות ושורף את המכסה. */
     if(ticket.parts && ticket.parts.length > 1 && prompt.length <= CHUNK_MAX)
-      return askPaged(ticket.key, ticket.system, prompt, ticket.parts, say);
-    return askLong(ticket.key, ticket.system, prompt, say);
+      return askPaged(tkeys(ticket), ticket.system, prompt, ticket.parts, say);
+    return askLong(tkeys(ticket), ticket.system, prompt, say);
   })
   .then(function(r){
     b.disabled = false; $('goTxt').textContent = 'הפעל';
@@ -2612,6 +2676,31 @@ function drawAdmin(r){
     '<input type="text" id="aKey" placeholder="הדבק כאן, או השאר ריק כדי למחוק" autocomplete="off"></div>' +
     '<button class="btn sec" id="aSaveKey">שמור מפתח</button></div>';
 
+  /* ---- מאגר מפתחות: הכפלת המכסה של Gemini -------------------------
+     המכסה החינמית של גוגל נספרת לכל פרויקט, ולכן כל מפתח מפרויקט אחר
+     הוא מכסה יומית שלמה נוספת. זה מה שמאפשר להישאר על הדגם האיכותי
+     במקום לרדת לדגם מוקטן שכותב עברית שבורה.                        */
+  var tails = r.keyTails || [];
+  h += '<div class="card"><h2>מאגר מפתחות — מכסה כפולה</h2>' +
+    '<p class="lead">כל מפתח מפרויקט אחר ב-Google AI Studio מוסיף מכסה יומית ' +
+    'שלמה. האפליקציה עוברת ביניהם לבד: ברגע שמפתח אחד מגיע למגבלה, היא ' +
+    'ממשיכה מיד למפתח הבא <b>באותו דגם איכותי</b>, ולא יורדת לדגם חלש.</p>' +
+    '<div class="note '+(tails.length>1?'ok':'warn')+'">' +
+      (tails.length ? ('במאגר ' + tails.length + ' מפתחות: ' + esc(tails.join(' · ')))
+                    : 'המאגר ריק.') +
+      (tails.length > 1 ? '' : ' כדאי להוסיף עוד — זה מכפיל את המכסה היומית.') +
+    '</div>' +
+    (r.addedKeys ? '<div class="note ok">נוספו ' + r.addedKeys[0] +
+                   ' מפתחות' + (r.addedKeys[1] ? ', ' + r.addedKeys[1] +
+                   ' כבר היו במאגר' : '') + '.</div>' : '') +
+    '<div class="field"><label for="aKeys">הדבק מפתחות נוספים (אחד בכל שורה)</label>' +
+    '<textarea id="aKeys" rows="4" placeholder="AIza...\nAIza...\nAIza..." ' +
+    'autocomplete="off" spellcheck="false"></textarea></div>' +
+    '<div class="row"><button class="btn sec" id="aAddKeys">הוסף למאגר</button>' +
+    '<button class="btn sec" id="aClearKeys">רוקן מאגר</button></div>' +
+    '<p class="hint">מפתח חינמי נוצר ב-aistudio.google.com/apikey. ' +
+    'פרויקט חדש שם = מכסה חדשה.</p></div>';
+
   /* דיווחים על תשובות שגויות. מוצגים לפני היומן בכוונה: זה הדבר
      היחיד בלוח שדורש פעולה, והיומן הוא רקע. */
   var reps = (r.reports || []), openReps = reps.filter(function(x){ return !x.fixed; });
@@ -2692,6 +2781,16 @@ function drawAdmin(r){
   };
   $('aSaveKey').onclick = function(){
     adminCall({op:'key', key:$('aKey').value.trim()});
+  };
+  $('aAddKeys').onclick = function(){
+    var v = $('aKeys').value.trim();
+    if(!v) return;
+    $('aKeys').value = '';      /* לא להשאיר מפתח על המסך אחרי השליחה */
+    adminCall({op:'addKeys', keys:v});
+  };
+  $('aClearKeys').onclick = function(){
+    if(confirm('לרוקן את מאגר המפתחות הנוספים? המפתח הראשי נשאר.'))
+      adminCall({op:'clearKeys'});
   };
 }
 
