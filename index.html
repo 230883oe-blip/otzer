@@ -808,7 +808,13 @@ function fetchSiman(p, raw, say){
 /* תקרת גודל. סימן עם כל נושאי הכלים נמדד כ-45 עד 70 אלף תווים — דגמי
    גוגל מתמודדים, ומנועי הטקסט החינמיים נופלים בשקט על פרומפט כזה.
    חותכים בגבול שורה ואומרים שנחתך, במקום להחזיר חצי בקשה בלי הסבר. */
-var SEF_MAX = 90000;
+/* 16/11/26 — "ניסיתי בכפתור דף מקורות שיתן לי טור בית יוסף סימן קצ והוא
+   כתב לי שזה ארוך מדי". יו״ד סימן קצ עם כל נושאי הכלים חורג מ-90,000
+   תווים, ולכן הוא **נחתך**, והמודל התבקש לומר שהחומר נחתך - המשתמש קרא
+   את זה כסירוב. בוט הטקסטים לא עושה את זה: שם `halacha.py` מחלק את הסימן
+   ליחידות ומעבד אותן אחת-אחת. עכשיו גם כאן (`askLong`), ולכן התקרה
+   עלתה: היא קיימת רק נגד קלט חריג באמת, לא נגד סימן ארוך. */
+var SEF_MAX = 400000;
 function sefCap(t){
   if(t.length <= SEF_MAX) return t;
   var cut = t.lastIndexOf('\n', SEF_MAX);
@@ -1673,6 +1679,54 @@ $('file').onchange = function(){
    החינמיים אינם, ולכן אין להם מקום בשרשרת הזאת. */
 var GEMINI_VISION = ['gemini-3.6-flash','gemini-3.8-flash','gemini-flash-latest',
                      'gemini-3.5-flash','gemini-3.1-flash-lite'];
+/* ---------- חומר ארוך: מעבדים בחלקים, לא חותכים ---------- */
+/* 45,000 תווים הוא מה שנמדד כאן כגבול שדגמי גוגל מתמודדים איתו בנוחות
+   (ומנועי הטקסט החינמיים נופלים הרבה לפניו). החיתוך הוא בגבול שורה. */
+var CHUNK_MAX = 45000;
+
+function splitChunks(t){
+  t = String(t == null ? '' : t);
+  if(t.length <= CHUNK_MAX) return [t];
+  var out = [], i = 0;
+  while(i < t.length){
+    if(t.length - i <= CHUNK_MAX){ out.push(t.substring(i)); break; }
+    var end = t.lastIndexOf('\n', i + CHUNK_MAX);
+    if(end <= i + CHUNK_MAX / 2) end = i + CHUNK_MAX;
+    out.push(t.substring(i, end));
+    i = end;
+  }
+  return out;
+}
+
+function askOne(key, system, q){
+  return key
+    ? askGemini(key, system, q).then(function(r){ return r || askFree(system, q); })
+    : askFree(system, q);
+}
+
+/* חומר שחורג מחלק אחד מעובד ברצף, חלק אחר חלק, והתוצאות משורשרות.
+   ברצף ולא במקביל: שליחה מקבילה של חמישה חלקים לאותו מפתח היא בדיוק
+   מה שמביא 429, ואז לא חוזר כלום. */
+function askLong(key, system, prompt, say){
+  var parts = splitChunks(prompt);
+  if(parts.length < 2) return askOne(key, system, prompt);
+  var outs = [], via = '';
+  return parts.reduce(function(chain, part, i){
+    return chain.then(function(){
+      if(say) say('החומר ארוך - עובד על חלק ' + (i + 1) + ' מתוך ' + parts.length + '…');
+      var head = 'זהו חלק ' + (i + 1) + ' מתוך ' + parts.length + ' של החומר. ' +
+        'בצע את המשימה על החלק הזה בלבד. אל תכתוב פתיח, אל תסביר שזה חלק, ' +
+        'ואל תחזור על מה שהיה בחלקים הקודמים - התוצאה שלך תחובר אליהם ברצף.\n\n';
+      return askOne(key, system, head + part).then(function(r){
+        if(r && r.text){ outs.push(r.text); via = r.via; }
+      });
+    });
+  }, Promise.resolve()).then(function(){
+    if(!outs.length) return null;
+    return { text: outs.join('\n\n'), via: via + ' · ' + parts.length + ' חלקים' };
+  });
+}
+
 function askGeminiImage(key, system, text, img){
   var i = 0;
   function tryOne(){
@@ -2244,10 +2298,7 @@ $('go').onclick = function(){
       return askGeminiImage(ticket.key, ticket.system,
         (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + ask, PICKED.image);
     }
-    return ticket.key
-      ? askGemini(ticket.key, ticket.system, prompt).then(function(r){
-          return r || askFree(ticket.system, prompt); })
-      : askFree(ticket.system, prompt);
+    return askLong(ticket.key, ticket.system, prompt, say);
   })
   .then(function(r){
     b.disabled = false; $('goTxt').textContent = 'הפעל';
