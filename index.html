@@ -439,9 +439,22 @@ var ENGINES = [
   { name:'nemo',      url:LLM7, model:'mistral-Nemo-Instruct-2407', auth:'Bearer unused' }
 ];
 /* דגמי גוגל, אם המנהל הגדיר מפתח. המכסה היומית היא לכל דגם בנפרד,
-   ולכן רשימה ארוכה היא כמה מכסות ולא אחת. */
-var GEMINI_MODELS = ['gemini-3.1-flash-lite','gemini-3.6-flash','gemini-3.8-flash',
-                     'gemini-flash-latest','gemini-3.5-flash'];
+   ולכן רשימה ארוכה היא כמה מכסות ולא אחת.
+
+   16/11/26 — **זה היה השורש של "לא נותנת אותה עבודה ברמת הטקסט".**
+   `gemini-3.1-flash-lite` ישב כאן **ראשון**, ולכן כמעט כל תשובה באפליקציה
+   נכתבה בדגם המוקטן. נמדד ב-`engine_check.py`: כל 17 האפשרויות נענו
+   ב-lite, "סיכום הלכתי בהרחבה" החזיר "לא מצאתי שגיאות" (תשובה של הגהה
+   לשאלה הלכתית), ו-"10 שאלות" החזיר אנגלית.
+
+   זה בדיוק הלקח של בוט הטקסטים מ-25/10 ומ-04/10: הדגם המוקטן ממציא
+   מילים בעברית, וכשהוא ראשון בשרשרת הוא בפועל המנוע היחיד. הסדר כאן
+   הוא **העתק של `gemini.WRITE_MODELS` בבוט**, שנקבע שם במדידה חיה ולא
+   לפי מספר הגרסה, והמוקטן נשאר אחרון ממש - כרשת ביטחון ולא כברירת מחדל.
+   `prompt_sync.py` נכשל אם השניים התפצלו.                              */
+var GEMINI_MODELS = ['gemini-3.6-flash','gemini-3.5-flash','gemini-3-flash-preview',
+                     'gemini-flash-latest','gemini-3.8-flash','gemini-3.7-flash',
+                     'gemini-3.1-flash-lite'];
 
 function withTimeout(p, ms){
   return new Promise(function(res, rej){
