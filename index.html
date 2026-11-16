@@ -1473,9 +1473,10 @@ function drawLuz(d){
     bt.textContent = 'מכין…'; bt.disabled = true;
     function done(){ pdfCleanup(); bt.textContent = old; bt.disabled = false; }
     loadScript(CDN.html2pdf).then(function(){
-      return window.html2pdf().set(pdfOpts(
+      /* pdfSaveOne ולא save(): נמדד שהלוח יצא בשני עמודים, והשני ריק. */
+      return pdfSaveOne(page,
         ((d.title || 'לוח זמנים').replace(/[\\\/:*?"<>|]/g,' ').substring(0,50)) + '.pdf'
-      )).from(page).save().then(done);
+      ).then(done);
     }).catch(function(){ done(); window.print(); });
   };
   $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
@@ -1620,6 +1621,21 @@ function pdfBlank(land){
     while(n > 1){ pdf.deletePage(n); n--; }   /* עמוד עודף מעיגול */
     return pdf;
   });
+}
+
+/* הפקת עמוד יחיד, לעמוד שעוצב מראש לדף A4 (לוח הזמנים).
+   16/11/26 — נמדד: `from(el).save()` של html2pdf הפיק **שני** עמודים
+   ללוח הזמנים, והשני ריק לגמרי (0.14% דיו מול 80% בראשון) — עיגול של
+   פיקסל-שניים בגובה. המשתמש מקבל דף לבן מיותר בכל הדפסה. ההורדה
+   עוברת עכשיו דרך אובייקט ה-PDF, והעודף נמחק. */
+function pdfSaveOne(el, name){
+  return window.html2pdf().set(pdfOpts(name)).from(el).toPdf().get('pdf')
+    .then(function(pdf){
+      var n = pdf.internal.getNumberOfPages();
+      while(n > 1){ pdf.deletePage(n); n--; }
+      pdf.save(name);
+      return 1;
+    });
 }
 
 function pdfFromImages(urls, name, land){
