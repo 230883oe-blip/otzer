@@ -477,7 +477,11 @@ function askGemini(key, system, text){
         body: JSON.stringify({
           systemInstruction:{parts:[{text:system}]},
           contents:[{role:'user',parts:[{text:text}]}],
-          generationConfig:{temperature:0.7,maxOutputTokens:8192}
+          /* 16/11/26 — "מערכי שיעור באפליקציה מאד קצרים": 8192 טוקנים הם
+             כ-6,000 מילים באנגלית אבל הרבה פחות בעברית (כל מילה עברית
+             נשברת לכמה טוקנים), ומערך שיעור בן ארבעה עמודים חורג מזה.
+             התקרה אינה עולה כסף - היא רק גבול. */
+          generationConfig:{temperature:0.7,maxOutputTokens:32768}
         })
       }).then(function(r){ return r.ok ? r.json() : null; }), 70000)
     .then(function(d){
