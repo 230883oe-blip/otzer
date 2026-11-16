@@ -453,8 +453,17 @@ var ENGINES = [
    לפי מספר הגרסה, והמוקטן נשאר אחרון ממש - כרשת ביטחון ולא כברירת מחדל.
    `prompt_sync.py` נכשל אם השניים התפצלו.                              */
 var GEMINI_MODELS = ['gemini-3.6-flash','gemini-3.5-flash','gemini-3-flash-preview',
-                     'gemini-flash-latest','gemini-3.8-flash','gemini-3.7-flash',
-                     'gemini-3.1-flash-lite'];
+                     'gemini-flash-latest','gemini-3.8-flash','gemini-3.7-flash'];
+/* 16/11/26 (ב) — להוציא את המוקטן מהרשימה לא הספיק, וזה נמדד.
+   המכסה היומית החינמית של גוגל נגמרת, וכשהיא נגמרת **כל** ששת הדגמים
+   המלאים מחזירים 429 - ואז המוקטן, שהיה אחרון באותה רשימה, ענה על כל
+   בקשה. כלומר "אחרון ברשימה" שווה ל"ראשון" ברגע שהשאר יבשים, והמשתמש
+   קיבל שוב את התוצאה הדלה.
+   לכן הוא אינו באותה רשימה בכלל: קודם הדגמים המלאים, אחריהם השערים
+   החינמיים (`askFree` - llm7 ו-pollinations, נמדדו 16/11 ומחזירים
+   עברית מלאה בלי שום מפתח), ורק אם גם הם לא ענו - המוקטן, כרשת
+   ביטחון אחרונה ממש. */
+var GEMINI_LAST = ['gemini-3.1-flash-lite'];
 
 function withTimeout(p, ms){
   return new Promise(function(res, rej){
@@ -465,11 +474,12 @@ function withTimeout(p, ms){
   });
 }
 
-function askGemini(key, system, text){
+function askGemini(key, system, text, list){
+  var models = list || GEMINI_MODELS;
   var i = 0;
   function tryOne(){
-    if(i >= GEMINI_MODELS.length) return Promise.resolve(null);
-    var m = GEMINI_MODELS[i++];
+    if(i >= models.length) return Promise.resolve(null);
+    var m = models[i++];
     return withTimeout(fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/'+m+
       ':generateContent?key='+encodeURIComponent(key),
@@ -1703,9 +1713,60 @@ function splitChunks(t){
 }
 
 function askOne(key, system, q){
-  return key
-    ? askGemini(key, system, q).then(function(r){ return r || askFree(system, q); })
-    : askFree(system, q);
+  if(!key) return askFree(system, q);
+  return askGemini(key, system, q).then(function(r){
+    return r || askFree(system, q).then(function(r2){
+      /* רשת הביטחון האחרונה, ורק אחרי שגם השערים החינמיים לא ענו. */
+      return r2 || askGemini(key, system, q, GEMINI_LAST);
+    });
+  });
+}
+
+/* ===================================================================
+   פלט רב-עמודי — עמוד בכל פנייה (16/11/26)
+
+   "מערכי שיעור באפליקציה מאד קצרים ולא תואמים לבוט הטקסטים."
+   נמדד מול המנוע החי: בקשה אחת לארבעה עמודים החזירה 687 מילים לכל
+   המסמך, בעוד ההנחיה דורשת 450-700 מילים לעמוד הראשון לבדו. זו אינה
+   תקרת טוקנים (היא הועלתה ל-32768 ולא השתנה כלום) אלא התנהגות של
+   מודל: כשמבקשים ממנו ארבעה חלקים בתשובה אחת הוא מחלק ביניהם את
+   אורך התשובה, ולכן כל חלק יוצא רבע.
+
+   בוט הטקסטים לא נתקל בזה כי `lesson.py` בונה בשלבים. כאן אותו
+   עיקרון: פנייה לכל עמוד, עם מה שכבר נכתב כהקשר כדי שלא יחזור על
+   עצמו ולא יסתור את עצמו. ברצף ולא במקביל - פניות מקבילות לאותו
+   מפתח הן בדיוק מה שמחזיר 429.
+   =================================================================== */
+function askPaged(key, system, prompt, parts, say){
+  if(!parts || parts.length < 2) return askOne(key, system, prompt);
+  var outs = [], via = '', n = parts.length;
+  return parts.reduce(function(chain, name, i){
+    return chain.then(function(){
+      if(say) say('בונה עמוד ' + (i+1) + ' מתוך ' + n + ' — ' + name + '…');
+      /* ההקשר הוא סופי העמודים הקודמים ולא כולם: החומר המקורי כבר
+         בפנייה, והוספת הכול שוב מנפחת כל פנייה עד לחריגה. */
+      var ctx = '';
+      if(outs.length){
+        ctx = '\n\n--- מה שכבר נכתב בעמודים הקודמים (להקשר בלבד, אל תחזור עליו) ---\n' +
+              outs.map(function(t, k){
+                return '[עמוד ' + (k+1) + ': ' + parts[k] + ']\n' +
+                       (t.length > 1800 ? t.substring(0, 1800) + '…' : t);
+              }).join('\n\n');
+      }
+      var head = 'כתוב **רק את עמוד ' + (i+1) + ' מתוך ' + n + ': ' + name + '**.\n' +
+        'אל תכתוב את שאר העמודים, אל תסכם אותם ואל תכתוב פתיח או הערה.\n' +
+        'פתח בשורה "===== עמוד ' + (i+1) + ': ' + name + ' =====" ומיד אחריה התוכן.\n' +
+        'זהו עמוד A4 מלא: כתוב אותו במלואו, במשפטים שלמים, לפי מה שההנחיה ' +
+        'דורשת לעמוד הזה. אורך של ראשי פרקים אינו מתקבל.\n\n' +
+        '--- החומר ---\n';
+      return askOne(key, system, head + prompt + ctx).then(function(r){
+        if(r && r.text){ outs.push(r.text.trim()); via = r.via; }
+      });
+    });
+  }, Promise.resolve()).then(function(){
+    if(!outs.length) return null;
+    return { text: outs.join('\n\n'), via: via + ' · ' + n + ' עמודים' };
+  });
 }
 
 /* חומר שחורג מחלק אחד מעובד ברצף, חלק אחר חלק, והתוצאות משורשרות.
@@ -2302,6 +2363,11 @@ $('go').onclick = function(){
       return askGeminiImage(ticket.key, ticket.system,
         (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + ask, PICKED.image);
     }
+    /* מצב רב-עמודי (מערך שיעור): עמוד בכל פנייה. רק כשהחומר נכנס
+       בפנייה אחת - חומר שחורג מפוצל ממילא ב-`askLong`, ופיצול כפול
+       היה מכפיל את מספר הפניות ושורף את המכסה. */
+    if(ticket.parts && ticket.parts.length > 1 && prompt.length <= CHUNK_MAX)
+      return askPaged(ticket.key, ticket.system, prompt, ticket.parts, say);
     return askLong(ticket.key, ticket.system, prompt, say);
   })
   .then(function(r){
