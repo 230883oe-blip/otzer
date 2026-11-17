@@ -1429,6 +1429,7 @@ function extractFile(file, say){
 /* ==== END files_client ==== */
 
 
+/* ==== BEGIN luz_client ==== */
 /* ===================================================================
    🗓️ לוח זמנים — עיצוב עמוד A4 בדפדפן.   (15/11/26, בקשת המשתמש)
 
@@ -1439,7 +1440,7 @@ function extractFile(file, say){
    המנתח חינמי לגמרי: בלי מודל ובלי מכסה. הוא הועתק מהלוגיקה של
    `parse.py`, והכללים שם נכתבו מול הודעות אמיתיות:
      * כותרת יום  = שורה שנגמרת ב-":" ואין בה שעה
-     * אירוע      = שורה שמתחילה בשעה
+     * אירוע      = שורה שיש בה שעה (בפתיחה, בסוף, או באמצע)
      * "משוער"    = זמן מוערך
      * *כוכביות*  = תזכורת
    =================================================================== */
@@ -1447,19 +1448,26 @@ function extractFile(file, say){
 var LUZ_KEY = ['הדלקת נרות','צאת','שקיעה','כניסת שבת','כניסת החג','הבדלה','יציאת','התכנסות'];
 var LUZ_DAY = /^(יום|ליל|לילה|שבת|מוצאי|ערב|חג|א['׳]|ב['׳]|ג['׳]|ד['׳]|ה['׳]|ו['׳])/;
 var LUZ_TIME = /^\s*[-•·*]?\s*(\d{1,2})[:.](\d{2})\s*[:\-–—.]?\s*(.*)$/;
-/* 17/11/26 — "כפתור לוח הזמנים לא עובד".
-   `LUZ_TIME` דורש שהשורה **תתחיל** בשעה, אבל בלוחות שבת הצורה הנפוצה
-   בעברית הפוכה: "הדלקת נרות 16:12", "מנחה — 16:25", "שחרית: 08:30".
-   לוח כזה לא זוהה כלל, `luzCount` החזיר 0, והמשתמש קיבל "לא זיהיתי
-   שעות בלוח" על לוח תקין לחלוטין. מבחינתו זה "הכפתור לא עובד", וזה
-   בדיוק מה שהוא דיווח.
-   שלוש הגנות, כל אחת נגד תפיסה שגויה שנבדקה:
-   1. נקודתיים בלבד (`16:12`) ולא נקודה — "16.12" הוא תאריך, ושורת
-      כותרת עם תאריך הייתה הופכת לאירוע.
-   2. חייב להישאר שם אירוע של שני תווים לפחות לפני השעה, אחרת שורה
-      שכל כולה שעה נתפסת פעמיים.
-   3. שורה שנגמרת בנקודתיים היא כותרת יום ואינה נבדקת כאן בכלל. */
+/* 17/11/26 — הצורה ההפוכה: "הדלקת נרות 16:12". ראה ההסבר המלא
+   ב-app.html. זה הקובץ שהבדיקה (`luz_check.py`) מריצה ב-Nashorn,
+   ו-app.html הוא מה שרץ אצל המשתמש - **שני עותקים של אותו פרסר**.
+   כל שינוי כאן חייב להיכנס גם שם, ו-`luz_check` נועל את זה. */
 var LUZ_TIME_END = /^\s*[-•·*]?\s*(.{2,}?)[\s,:\-–—]+(\d{1,2}):(\d{2})\s*$/;
+/* 17/11/26 — השעה באמצע השורה: "מנחה 16:30 בבית הכנסת",
+   "שחרית בשעה 08:30 בבית המדרש". זו הצורה שמופיעה בלוחות שנכתבו
+   כהודעה רגילה, והיא זו שהחזירה "לא זיהיתי שעות בלוח" על לוח תקין.
+   המנתח של הבוט (`parse.py::_event_time`) כבר עשה את זה; כאן זה חסר.
+
+   שלוש הגנות, כל אחת נגד תפיסה שגויה שנבדקה:
+   1. **נקודתיים בלבד.** בבוט מותר גם "16.12", אבל כאן אין את
+      `_TITLE_HEAD` שמגן, ולכן "לוח זמנים · שבת 16.12" היה הופך
+      לאירוע. נקודה מותרת רק בפתיחת שורה (`LUZ_TIME`).
+   2. שורה ארוכה מ-90 תווים היא פסקה ולא אירוע.
+   3. שורה שנגמרת בנקודתיים היא כותרת יום ואינה נבדקת כאן בכלל.
+   (ES5/Nashorn: אין lookbehind, ולכן התו שלפני נתפס בקבוצה 1.) */
+var LUZ_TIME_ANY = /(^|[^\d:.])(\d{1,2}):(\d{2})($|[^\d:.])/;
+/* "מנחה בשעה 16:30" - המילה שמובילה לשעה אינה חלק משם האירוע. */
+var LUZ_LEAD = /[\s,:\-–—]*(?:בשעה|החל\s+מ|החל|מ(?:השעה)?|עד|בדיוק)?[\s,:\-–—]*$/;
 
 function luzClean(t){
   return (t || '').replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g, '');
@@ -1500,7 +1508,31 @@ function luzParse(text){
       /* הצורה ההפוכה: "הדלקת נרות 16:12". נבדקת רק כשאין שעה בפתיחה
          ורק כשהשורה אינה כותרת יום. */
       var m2 = ln.match(LUZ_TIME_END);
-      if(m2){ rest = m2[1]; hh = parseInt(m2[2], 10); mm = m2[3]; }
+      if(m2){
+        /* "הדלקת נרות בשעה 16:12" נתפס כאן ולא בענף הבא, ולכן ניקוי
+           המילה המובילה חייב להיות **גם** כאן. בלעדיו שם האירוע
+           בעמוד יוצא "הדלקת נרות בשעה" - נמדד ב-17/11. */
+        var c2 = m2[1].replace(LUZ_LEAD, '');
+        rest = c2.length >= 2 ? c2 : m2[1];
+        hh = parseInt(m2[2], 10); mm = m2[3];
+      }
+      else if(bare.length <= 90){
+        /* והשעה באמצע: "מנחה 16:30 בבית הכנסת". */
+        var m3 = bare.match(LUZ_TIME_ANY);
+        if(m3 && parseInt(m3[2], 10) <= 23 && parseInt(m3[3], 10) <= 59){
+          var at = m3.index + m3[1].length;
+          var left = bare.substring(0, at).replace(LUZ_LEAD, '');
+          var right = bare.substring(at + m3[2].length + 1 + m3[3].length)
+                          .replace(/^[\s,:\-–—]+/, '');
+          var joined = (left + ' ' + right).replace(/\s+/g, ' ')
+                          .replace(/^[\s,.\-–:]+|[\s,.\-–:]+$/g, '');
+          /* שם של שני תווים לפחות - אחרת זו שורה שכולה שעה, או
+             מספר בודד שנצמד לשעה ואינו שם אירוע. */
+          if(joined.length >= 2){
+            rest = joined; hh = parseInt(m3[2], 10); mm = m3[3];
+          }
+        }
+      }
     }
     if(rest !== null && hh >= 0 && hh <= 23){
       if(!cur){ cur = { name:'', date:'', events:[] }; out.days.push(cur); }
@@ -1541,19 +1573,175 @@ function luzCount(d){
 }
 
 /* ---------- התבניות ---------- */
-/* שלוש, וכל אחת נבדלת בשימוש ולא רק בצבע: "כחול וזהב" לשבת וחג,
-   "טבלה נקייה" ללוח מעשי שמודפס ונתלה, "קלף" לאירוע מיוחד. */
+/* שבע, ובמכוון **אותן שבע ובאותם שמות** כמו בבוט הטקסטים
+   (`luz_bot.py::STYLES` — 1,3,5,6,7,8,10). המשתמש מכיר אותן משם,
+   ובקשתו ב-17/11 הייתה בדיוק זו: "האפליקציה צריכה להפיק את אותן
+   תבניות". כל אחת נבדלת בשימוש ולא רק בצבע. */
 var LUZ_STYLES = [
   { key:'blue',  name:'כחול וזהב' },
   { key:'clean', name:'טבלה נקייה' },
-  { key:'scroll',name:'קלף ומגילה' }
+  { key:'scroll',name:'קלף ומגילה' },
+  { key:'clock', name:'שעונים' },
+  { key:'poster',name:'פוסטר גדול' },
+  { key:'menu',  name:'תפריט חגיגי' },
+  { key:'grid',  name:'מערכת שעות' }
 ];
 
-function luzHtml(d, style){
-  function e(s){
-    return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
-      .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+function luzEsc(s){
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* שעון אנלוגי קטן לתבנית "שעונים". SVG ולא תמונה: נכנס ל-PDF
+   כווקטור, ולא דורש רשת. */
+function luzClock(t, color){
+  var m = /(\d{1,2})[:.](\d{2})/.exec(t || ''), hh = 0, mi = 0;
+  if(m){ hh = parseInt(m[1], 10) % 12; mi = parseInt(m[2], 10); }
+  var ha = (hh + mi / 60) * 30 * Math.PI / 180, ma = mi * 6 * Math.PI / 180;
+  function x(a, r){ return (25 + r * Math.sin(a)).toFixed(1); }
+  function y(a, r){ return (25 - r * Math.cos(a)).toFixed(1); }
+  var ticks = '', i, a;
+  for(i = 0; i < 12; i++){
+    a = i * 30 * Math.PI / 180;
+    ticks += '<line x1="' + x(a,21) + '" y1="' + y(a,21) + '" x2="' + x(a,23.5) +
+             '" y2="' + y(a,23.5) + '" stroke="' + color + '" stroke-width="' +
+             (i % 3 === 0 ? 2 : 1) + '" opacity=".85"/>';
   }
+  return '<svg class="luzclk" viewBox="0 0 50 50" width="42" height="42">' +
+    '<circle cx="25" cy="25" r="24" fill="#10202b" stroke="' + color + '" stroke-width="1.6"/>' +
+    ticks +
+    '<line x1="25" y1="25" x2="' + x(ha,12) + '" y2="' + y(ha,12) +
+      '" stroke="#fff" stroke-width="2.6" stroke-linecap="round"/>' +
+    '<line x1="25" y1="25" x2="' + x(ma,18) + '" y2="' + y(ma,18) +
+      '" stroke="' + color + '" stroke-width="1.8" stroke-linecap="round"/>' +
+    '<circle cx="25" cy="25" r="2" fill="' + color + '"/></svg>';
+}
+
+/* ---- התבניות שנבנות מגוף משלהן ---- */
+
+function luzClockHtml(d){
+  var e = luzEsc, AC = '#2de2c0', i, j;
+  var h = '<div class="luzpg luzdark" style="background:#0e1a24;color:#e8f1f4">';
+  h += '<div class="luzbsd" style="color:' + AC + '">בס"ד</div>';
+  if(d.kicker) h += '<div class="luzkick" style="color:' + AC + '">' + e(d.kicker) + '</div>';
+  h += '<h1 class="luzt" style="color:#fff">' + e(d.title || 'לוח זמנים') + '</h1>';
+  if(d.greeting) h += '<div class="luzgr" style="color:#a9bfca">' + e(d.greeting) + '</div>';
+  h += '<div class="luzrule" style="background:#24394a"></div>';
+  h += '<div class="luzdays' + (d.days.length > 2 ? ' two' : '') + '">';
+  for(i = 0; i < d.days.length; i++){
+    var day = d.days[i];
+    h += '<div>';
+    if(day.name) h += '<div class="luzcdn">' + e(day.name) +
+      (day.date ? '<span>' + e(day.date) + '</span>' : '') + '</div>';
+    for(j = 0; j < day.events.length; j++){
+      var ev = day.events[j];
+      h += '<div class="luzcev' + (ev.key ? ' key' : '') + '">' + luzClock(ev.time, AC) +
+           '<div class="luzctx"><span class="luzctm">' + e(ev.time) + '</span>' +
+           '<div class="luzcti">' + e(ev.title) +
+           (ev.approx ? ' <span class="luzap">(משוער)</span>' : '') + '</div>' +
+           (ev.note ? '<small>' + e(ev.note) + '</small>' : '') + '</div></div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  if(d.reminder) h += '<div class="luzcrem">' + e(d.reminder) + '</div>';
+  if(d.closing) h += '<div class="luzccl">' + e(d.closing) + '</div>';
+  return h + '</div>';
+}
+
+function luzPosterHtml(d){
+  var e = luzEsc, i, j;
+  var h = '<div class="luzpg luzpos" style="background:' +
+          'linear-gradient(160deg,#7a1020,#3d0810 70%,#24060b);color:#fdf4e3">';
+  h += '<div class="luzbsd" style="color:#e9c46a">בס"ד</div>';
+  if(d.kicker) h += '<div class="luzpk">' + e(d.kicker) + '</div>';
+  h += '<h1 class="luzph">' + e(d.title || 'לוח זמנים') + '</h1>';
+  if(d.greeting) h += '<div class="luzpg2">' + e(d.greeting) + '</div>';
+  h += '<div class="luzprule"></div>';
+  for(i = 0; i < d.days.length; i++){
+    var day = d.days[i];
+    if(day.name) h += '<div class="luzpdn">' + e(day.name) +
+      (day.date ? ' <span>' + e(day.date) + '</span>' : '') + '</div>';
+    for(j = 0; j < day.events.length; j++){
+      var ev = day.events[j];
+      h += '<div class="luzpev' + (ev.key ? ' key' : '') + '">' +
+           '<span class="luzpt">' + e(ev.time) + '</span>' +
+           '<span class="luzpi">' + e(ev.title) +
+           (ev.approx ? ' <span class="luzap">(משוער)</span>' : '') +
+           (ev.note ? '<small>' + e(ev.note) + '</small>' : '') + '</span></div>';
+    }
+  }
+  if(d.reminder) h += '<div class="luzprem">' + e(d.reminder) + '</div>';
+  if(d.closing) h += '<div class="luzpcl">' + e(d.closing) + '</div>';
+  return h + '</div>';
+}
+
+function luzMenuHtml(d){
+  var e = luzEsc, i, j;
+  var h = '<div class="luzpg luzmn" style="background:#fbf4e4;color:#3a2a16">';
+  h += '<div class="luzbsd" style="color:#8a1f2b">בס"ד</div>';
+  h += '<div class="luzmfr">';
+  if(d.kicker) h += '<div class="luzmk">' + e(d.kicker) + '</div>';
+  h += '<h1 class="luzmh">' + e(d.title || 'לוח זמנים') + '</h1>';
+  if(d.greeting) h += '<div class="luzmg">' + e(d.greeting) + '</div>';
+  h += '</div>';
+  for(i = 0; i < d.days.length; i++){
+    var day = d.days[i];
+    if(day.name) h += '<div class="luzmdn"><span>' + e(day.name) + '</span>' +
+      (day.date ? '<em>' + e(day.date) + '</em>' : '') + '</div>';
+    for(j = 0; j < day.events.length; j++){
+      var ev = day.events[j];
+      h += '<div class="luzmev' + (ev.key ? ' key' : '') + '">' +
+           '<span class="luzmi">' + e(ev.title) +
+           (ev.approx ? ' <span class="luzap">(משוער)</span>' : '') + '</span>' +
+           '<span class="luzmd"></span>' +
+           '<span class="luzmt">' + e(ev.time) + '</span></div>';
+      if(ev.note) h += '<div class="luzmn2">' + e(ev.note) + '</div>';
+    }
+  }
+  if(d.reminder) h += '<div class="luzmrem">' + e(d.reminder) + '</div>';
+  if(d.closing) h += '<div class="luzmcl">' + e(d.closing) + '</div>';
+  return h + '</div>';
+}
+
+function luzGridHtml(d){
+  var e = luzEsc, i, j;
+  var h = '<div class="luzpg luzgd" style="background:#ffffff;color:#1b2430">';
+  h += '<div class="luzbsd" style="color:#0f766e">בס"ד</div>';
+  if(d.kicker) h += '<div class="luzkick" style="color:#0f766e">' + e(d.kicker) + '</div>';
+  h += '<h1 class="luzt">' + e(d.title || 'לוח זמנים') + '</h1>';
+  if(d.greeting) h += '<div class="luzgr">' + e(d.greeting) + '</div>';
+  h += '<div class="luzrule" style="background:#0f766e"></div>';
+  /* עמודה לכל יום, זו הצורה של "מערכת שעות". עד שלוש עמודות -
+     מעבר לזה הטקסט נדחס ואינו קריא בהדפסה. */
+  var cols = d.days.length >= 3 ? 3 : (d.days.length || 1);
+  h += '<div class="luzgt" style="grid-template-columns:repeat(' + cols + ',1fr)">';
+  for(i = 0; i < d.days.length; i++){
+    var day = d.days[i];
+    h += '<div class="luzgc"><div class="luzgh">' + e(day.name || 'לוח') +
+         (day.date ? '<span>' + e(day.date) + '</span>' : '') + '</div>';
+    for(j = 0; j < day.events.length; j++){
+      var ev = day.events[j];
+      h += '<div class="luzgr2' + (ev.key ? ' key' : '') + '">' +
+           '<div class="luzgtm">' + e(ev.time) + '</div>' +
+           '<div class="luzgti">' + e(ev.title) +
+           (ev.approx ? ' <span class="luzap">(משוער)</span>' : '') +
+           (ev.note ? '<small>' + e(ev.note) + '</small>' : '') + '</div></div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  if(d.reminder) h += '<div class="luzgrem">' + e(d.reminder) + '</div>';
+  if(d.closing) h += '<div class="luzcl">' + e(d.closing) + '</div>';
+  return h + '</div>';
+}
+
+function luzHtml(d, style){
+  if(style === 'clock')  return luzClockHtml(d);
+  if(style === 'poster') return luzPosterHtml(d);
+  if(style === 'menu')   return luzMenuHtml(d);
+  if(style === 'grid')   return luzGridHtml(d);
+  var e = luzEsc;
   var th = {
     blue:  { bg:'linear-gradient(170deg,#0b1f45,#13326b 60%,#0b1f45)', fg:'#f6f3e7',
              acc:'#e8c46a', card:'rgba(255,255,255,.07)', line:'rgba(232,196,106,.35)' },
@@ -1619,8 +1807,79 @@ var LUZ_CSS =
 '.luznt{display:block;font-size:13.5px;opacity:.78;margin-top:1px}' +
 '.luzrem{margin-top:18px;border:2px dashed;border-radius:12px;padding:11px 14px;' +
  'font-size:16px;font-weight:600;text-align:center}' +
-'.luzcl{margin-top:16px;font-size:16px;text-align:center;opacity:.9;font-weight:600}';
-
+'.luzcl{margin-top:16px;font-size:16px;text-align:center;opacity:.9;font-weight:600}' +
+/* ---- 4. שעונים ---- */
+'.luzcdn{display:flex;justify-content:space-between;align-items:baseline;' +
+ 'font-size:20px;font-weight:700;color:#fff;margin-bottom:9px}' +
+'.luzcdn span{font-size:13px;color:#2de2c0;font-weight:500}' +
+'.luzcev{display:flex;gap:13px;align-items:center;background:#15283a;' +
+ 'border-radius:13px;padding:8px 13px;margin-bottom:8px;border-right:4px solid #24455c}' +
+'.luzcev.key{background:#173a45;border-right-color:#2de2c0}' +
+'.luzclk{display:block;flex:none}' +
+'.luzctx{flex:1}' +
+'.luzctm{font-weight:700;font-size:17px;color:#2de2c0;' +
+ 'font-variant-numeric:tabular-nums;display:block}' +
+'.luzcti{font-size:15px;line-height:1.35;color:#eef6f8}' +
+'.luzctx small{display:block;font-size:12.5px;color:#8aa4b1;margin-top:2px}' +
+'.luzcrem{margin-top:16px;background:#15283a;border:2px solid #2de2c0;border-radius:14px;' +
+ 'padding:12px 16px;font-size:15.5px;color:#dff7f1;text-align:center;font-weight:600}' +
+'.luzccl{margin-top:14px;text-align:center;font-weight:700;font-size:18px;color:#2de2c0}' +
+/* ---- 5. פוסטר גדול ---- */
+'.luzpos{padding:52px 50px}' +
+'.luzpk{font-size:18px;letter-spacing:2px;color:#e9c46a;font-weight:600;text-align:center}' +
+'.luzph{font-size:58px;line-height:1.08;margin:6px 0 4px;font-weight:900;text-align:center;' +
+ 'color:#fdf4e3;text-shadow:0 2px 0 rgba(0,0,0,.25)}' +
+'.luzpg2{font-size:19px;text-align:center;color:#f0d7b8;margin-bottom:6px}' +
+'.luzprule{height:4px;background:#e9c46a;border-radius:4px;margin:16px auto 22px;width:72%}' +
+'.luzpdn{font-size:27px;font-weight:800;color:#e9c46a;margin:18px 0 8px;' +
+ 'border-bottom:2px solid rgba(233,196,106,.4);padding-bottom:5px}' +
+'.luzpdn span{font-size:16px;font-weight:600;opacity:.85}' +
+'.luzpev{display:flex;gap:16px;align-items:baseline;padding:7px 0;font-size:22px;' +
+ 'border-bottom:1px dotted rgba(253,244,227,.22)}' +
+'.luzpev.key{font-weight:800;color:#ffe9b8}' +
+'.luzpt{font-variant-numeric:tabular-nums;font-weight:800;min-width:92px;' +
+ 'font-size:25px;color:#e9c46a}' +
+'.luzpi{flex:1}.luzpi small{display:block;font-size:15px;opacity:.8;margin-top:2px}' +
+'.luzprem{margin-top:24px;border:3px dashed #e9c46a;border-radius:16px;padding:14px 18px;' +
+ 'font-size:20px;font-weight:700;text-align:center;color:#ffe9b8}' +
+'.luzpcl{margin-top:20px;text-align:center;font-size:22px;font-weight:700;color:#e9c46a}' +
+/* ---- 6. תפריט חגיגי ---- */
+'.luzmn{padding:46px 56px;font-family:Georgia,"Segoe UI",serif}' +
+'.luzmfr{text-align:center;border:3px double #8a1f2b;border-radius:10px;' +
+ 'padding:16px 18px;margin-bottom:22px}' +
+'.luzmk{font-size:15px;letter-spacing:3px;color:#8a1f2b;font-weight:600}' +
+'.luzmh{font-size:42px;margin:4px 0;font-weight:700;color:#5c1018}' +
+'.luzmg{font-size:16px;color:#6b573a}' +
+'.luzmdn{display:flex;justify-content:space-between;align-items:baseline;' +
+ 'font-size:23px;font-weight:700;color:#8a1f2b;margin:20px 0 8px;' +
+ 'border-bottom:1.5px solid rgba(138,31,43,.35);padding-bottom:5px}' +
+'.luzmdn em{font-style:normal;font-size:14px;color:#6b573a}' +
+'.luzmev{display:flex;align-items:baseline;gap:8px;padding:5px 0;font-size:17px}' +
+'.luzmev.key{font-weight:700;color:#5c1018}' +
+'.luzmi{flex:none;max-width:70%}' +
+'.luzmd{flex:1;border-bottom:2px dotted rgba(90,60,30,.45);transform:translateY(-4px)}' +
+'.luzmt{flex:none;font-variant-numeric:tabular-nums;font-weight:700;color:#8a1f2b;' +
+ 'font-size:18px}' +
+'.luzmn2{font-size:13.5px;color:#6b573a;margin:-2px 0 4px;padding-right:6px}' +
+'.luzmrem{margin-top:22px;border:2px solid #8a1f2b;border-radius:10px;padding:12px 16px;' +
+ 'text-align:center;font-size:16px;font-weight:700;color:#5c1018;background:rgba(138,31,43,.07)}' +
+'.luzmcl{margin-top:18px;text-align:center;font-size:19px;color:#8a1f2b;font-weight:700}' +
+/* ---- 7. מערכת שעות ---- */
+'.luzgt{display:grid;gap:12px;align-items:start}' +
+'.luzgc{border:1.5px solid #cfe0dd;border-radius:12px;overflow:hidden}' +
+'.luzgh{background:#0f766e;color:#fff;font-size:18px;font-weight:700;padding:9px 12px;' +
+ 'display:flex;justify-content:space-between;align-items:baseline}' +
+'.luzgh span{font-size:12.5px;font-weight:500;opacity:.9}' +
+'.luzgr2{display:flex;gap:10px;align-items:baseline;padding:7px 12px;' +
+ 'border-bottom:1px solid #e3eeec;font-size:15px}' +
+'.luzgr2:nth-child(even){background:#f3f9f8}' +
+'.luzgr2.key{background:#ddf2ef;font-weight:700}' +
+'.luzgtm{font-variant-numeric:tabular-nums;font-weight:700;color:#0f766e;min-width:50px}' +
+'.luzgti{flex:1;line-height:1.35}' +
+'.luzgti small{display:block;font-size:12.5px;color:#5c7472;margin-top:1px}' +
+'.luzgrem{margin-top:18px;border:2px dashed #0f766e;border-radius:12px;padding:11px 14px;' +
+ 'font-size:16px;font-weight:600;text-align:center;color:#0f766e}';
+/* ==== END luz_client ==== */
 /* ציור לוח הזמנים: שלוש תבניות, מעבר ביניהן בלחיצה, והורדת PDF של
    מה שרואים. העיצוב מוזרק פעם אחת לתג ששמור לו ב-<head>. */
 function drawLuz(d){
@@ -2372,8 +2631,13 @@ $('go').onclick = function(){
     b.disabled = false; $('goTxt').textContent = 'הפעל';
     var ld = luzParse(raw);
     if(!luzCount(ld)){
-      note('err','bad','לא זיהיתי שעות בלוח. כל אירוע בשורה שמתחילה בשעה, ' +
-        'למשל: 16:12 הדלקת נרות · וכותרת לכל יום שנגמרת בנקודתיים.');
+      /* 17/11: ההודעה הישנה הורתה "שורה שמתחילה בשעה" בלבד, וזה כבר
+         לא נכון - השעה מזוהה גם בסוף השורה וגם באמצעה. היא גם הטעתה:
+         המשתמש שלח לוח תקין, קיבל את ההוראה הזאת, וחשב שהכפתור שבור. */
+      note('err','bad','לא זיהיתי שעות בלוח. כל אירוע בשורה אחת שיש בה ' +
+        'שעה עם נקודתיים - בהתחלה, בסוף או באמצע. למשל: 16:12 הדלקת ' +
+        'נרות · הדלקת נרות 16:12 · מנחה 16:30 בבית הכנסת. כותרת לכל ' +
+        'יום בשורה שנגמרת בנקודתיים, למשל: ליל שבת:');
       return;
     }
     drawLuz(ld);
