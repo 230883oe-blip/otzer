@@ -260,6 +260,9 @@ footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px
         <input type="text" id="extra" placeholder="למשל: בקצרה · בהרחבה · לתלמידי כיתה ז · בטון רשמי">
       </div>
       <button class="btn wide" id="go"><span id="goTxt">הפעל</span></button>
+      <!-- 18/11/26, בקשה מפורשת: "כפתור ביטול שמבטל כל פעילות ומאפשר
+           לי לבחור בכפתור אחר". מוצג רק כשיש מה לבטל. -->
+      <button class="btn sec wide hide" id="cancel" type="button">✖ בטל</button>
       <div id="err"></div>
     </div>
 
@@ -410,6 +413,10 @@ function drawModes(){
   setMode(S.mode);
 }
 function setMode(k){
+  /* בחירת כפתור אחר באמצע עבודה מבטלת את העבודה שרצה. זה החצי השני
+     של בקשת הביטול ("ומאפשר לי לבחור בכפתור אחר"): בלי זה ההרצה
+     הקודמת הייתה חוזרת מהרשת וכותבת את התוצאה שלה על המסך החדש. */
+  if(typeof cancelRun === 'function' && S.mode !== k) cancelRun(true);
   S.mode = k;
   Array.prototype.forEach.call($('modes').children, function(el){
     el.classList.toggle('on', el.getAttribute('data-k')===k);
@@ -840,6 +847,12 @@ function fetchSiman(p, raw, say){
   return Promise.all(jobs).then(function(res){
     var out = ['######## ' + p.part.he + ' · סימן ' + p.siman + ' ########'];
     var got = [], missing = [], n;
+    /* 18/11/26 — מלבד הטקסט למודל, נשמר כאן המבנה עצמו (`blocks`).
+       דף מקורות בבוט אינו פרומפט אלא עימוד של הלשון מספריא
+       (`sheetlib/compose.py`), ואי אפשר לעמד מתוך מחרוזת שטוחה:
+       צריך לדעת מה טור, מה בית יוסף, איזה סעיף ואיזה ס״ק. */
+    var blocks = [];
+    var simLbl = 'סימן ' + hnum(p.siman) + ' (' + p.siman + ')';
 
     for(n = 0; n < res.length; n++){
       var segs = res[n], label = labels[n];
@@ -850,19 +863,33 @@ function fetchSiman(p, raw, say){
         var s;
         for(s = 0; s < segs.length; s++)
           out.push('=== שולחן ערוך סעיף ' + hnum(s + 1) + ' ===', segs[s]);
+        blocks.push({ kind: 'sa', label: 'שולחן ערוך · ' + simLbl, seifim: segs,
+                      kicker: p.part.he, scope: segs.length + ' סעיפים' });
       } else if(label === 'טור' || label === 'בית יוסף'){
         out.push('', '=== ' + label + ' ===');
         out = out.concat(segs);
+        blocks.push({ kind: label === 'טור' ? 'tur' : 'by',
+                      label: label + ' · ' + simLbl, paras: segs,
+                      kicker: p.part.he, scope: 'כל הסימן · ' + segs.length + ' קטעים' });
       } else {
         out.push('', '--- ' + label + ' ---');
         var q;
         for(q = 0; q < segs.length; q++) out.push('(ס״ק ' + hnum(q + 1) + ') ' + segs[q]);
+        blocks.push({ kind: 'comm', label: label, segs: segs,
+                      kicker: 'נושאי כלים · ' + simLbl,
+                      scope: segs.length + ' סעיפי קטן' });
       }
     }
     if(!got.length) return null;
     return { text: sefCap(out.join('\n')),
              note: 'מקור מלא מספריא · סימן ' + p.siman + ' ב' + p.part.he + ' · ' + got.join(', '),
-             missing: missing };
+             missing: missing,
+             sheet: { title: p.part.he + ' · ' + simLbl,
+                      subtitle: got.join(' · '),
+                      scope: 'הלשון מספריא, כפי שהיא. ' +
+                             (missing.length ? 'לא נמצא: ' + missing.join(', ') : ''),
+                      name: 'דף מקורות - ' + p.part.he + ' סימן ' + p.siman,
+                      blocks: blocks } };
   });
 }
 
@@ -897,15 +924,22 @@ function fetchDaf(d, raw, say){
     if(!res[0] || !res[0].length) return null;
     var side = d.side === 'a' ? 'ע״א' : 'ע״ב';
     var out = ['######## ' + d.he + ' דף ' + d.daf + ' ' + side + ' ########'], got = [], n;
+    var blocks = [], ref = d.he + ' ' + hnum(d.daf) + ' ' + side;
     for(n = 0; n < res.length; n++){
       if(!res[n].length) continue;
       got.push(labels[n]);
       out.push('', '=== ' + labels[n] + ' ===');
       out = out.concat(res[n]);
+      blocks.push({ kind: 'source', label: labels[n] + ' · ' + ref, paras: res[n],
+                    kicker: 'מקור', scope: res[n].length + ' קטעים' });
     }
     return { text: out.join('\n'),
              note: 'מקור מלא מספריא · ' + d.he + ' ' + d.daf + ' ' + side + ' · ' + got.join(', '),
-             missing: [] };
+             missing: [],
+             sheet: { title: ref, subtitle: got.join(' · '),
+                      scope: 'לשון הגמרא והמפרשים מספריא, כפי שהיא.',
+                      name: 'דף מקורות - ' + d.he + ' ' + d.daf + side,
+                      blocks: blocks } };
   });
 }
 
@@ -926,7 +960,12 @@ function sefariaSource(raw, say){
     return sefText(link).then(function(segs){
       if(!segs.length) return null;
       return { text: '######## ' + link + ' ########\n' + segs.join('\n'),
-               note: 'מקור מלא מספריא · ' + link, missing: [] };
+               note: 'מקור מלא מספריא · ' + link, missing: [],
+               sheet: { title: link, subtitle: 'מספריא',
+                        scope: 'הלשון כפי שהיא, בלי ניסוח מחדש.',
+                        name: 'דף מקורות - ' + link,
+                        blocks: [{ kind: 'source', label: link, paras: segs,
+                                   kicker: 'מקור', scope: segs.length + ' קטעים' }] } };
     });
   }
   /* בקשה ארוכה שיש בה כבר חומר אינה בקשת מראה מקום. 60 מילים: בקשת
@@ -2479,7 +2518,796 @@ function squeezePdf(file, per, say){
 }
 
 /* ==== END tools_client ==== */
+/* ==== BEGIN sheet_client ==== */
+/* ===================================================================
+   דף מקורות וסיכום הלכתי — אותו תוצר של בוט הטקסטים, בדפדפן.
+                                                      (18/11/26)
+
+   הבקשה: "תשווה בין ביצועי כפתור דף מקורות וכפתור סיכום הלכתי בבוט
+   הטקסטים לבין האפליקציה, שיראה אותו דבר הן בקובץ ה-PDF והן בטקסט,
+   שווה בכל האספקטים."
+
+   **הפער שנמדד, ולא שוער:** בבוט שני הכפתורים אינם פרומפט אלא
+   מודולים שלמים —
+   · דף מקורות = `sheets.py` + `source_sheets/` : **אין מודל בכלל**.
+     רשימת המקורות נפתרת, הלשון נשלפת מספריא, ו-`sheetlib/compose.py`
+     מעמד שער ← מפתח מקורות ← מקור לכל עמוד ← עמוד הערות, לפי
+     `templates/sheet.css`.
+   · סיכום הלכתי = `halacha.py` : המודל מחזיר **JSON מובנה** (יחידות,
+     חלקים, שורות עם תווית, סוגיות, מסקנות), ו-`render_html` מעצב
+     אותו בצבעים לפי סוג החלק.
+   באפליקציה שניהם היו פרומפט אחד שמחזיר טקסט חופשי, ו-PDF גנרי של
+   פסקאות. זה ההבדל באיכות — לא ההנחיה.
+
+   לכן כאן: פורט נאמן של שני המרנדרים. כל המידות, הצבעים והכיתובים
+   לקוחים מ-`templates/sheet.css` ומ-`halacha.CSS`, מומרים מ-pt/mm
+   לפיקסלים ב-96dpi (1pt = 1.333px, 1mm = 3.7795px) — בדיוק כמו
+   שנעשה כאן ל-`printpdf.py` ב-16/11.
+
+   ES5 בלבד: `js_check.py` מפרסר ב-Nashorn (Java 8), ואין בו חצים,
+   template literals ו-let/const.
+   =================================================================== */
+
+var MM = 3.7795;                       /* 1mm ב-96dpi */
+var PT = 1.3333;                       /* 1pt ב-96dpi */
+function mm(v){ return (v * MM).toFixed(1) + 'px'; }
+function pt(v){ return (v * PT).toFixed(2) + 'px'; }
+
+/* ---------- ביטול: אסימון שכל שלב ארוך בודק ---------- */
+/* למה אסימון ולא דגל אחד: הרצה שבוטלה ממשיכה לרוץ ברשת עוד שניות
+   (fetch אינו נעצר), ואם היא תכתוב לממשק אחרי שהמשתמש בחר כפתור
+   אחר — היא תדרוס את העבודה החדשה. האסימון נבדק לפני כל כתיבה. */
+function jobToken(){ return { off: false }; }
+function jobStop(t){ if(t) t.off = true; }
+function jobLive(t){ return !t || !t.off; }
+var CANCEL_MSG = '__CANCEL__';
+function jobCheck(t){ if(t && t.off) throw new Error(CANCEL_MSG); }
+function isCancel(e){ return !!e && String(e.message) === CANCEL_MSG; }
+
+/* ===================================================================
+   עימוד עשיר: רשימת אלמנטים ← עמודי A4
+   ===================================================================
+   `pdfPaginate` הקיים מקבל **טקסט** ובונה פסקאות. דף מקורות וסיכום
+   הלכתי הם HTML עם קופסאות, טבלאות וצבעים, ולכן צריך עימוד שמקבל
+   אלמנטים. ההכרעה נשארת זהה: `scrollHeight` של העמוד עצמו, כלומר מה
+   שהדפדפן באמת סידר — ולא חישוב גבהים משלנו.
+
+   לכל פריט ברשימה: `el` (האלמנט), `brk` ('page' = פותח עמוד),
+   `full` (עמוד שלם לבדו — שער), `keep` (כותרת שאסור שתישאר לבד
+   בתחתית עמוד).                                                  */
+function richPageEl(){
+  var d = document.createElement('div');
+  d.setAttribute('dir', 'rtl');
+  d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
+    'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
+    'padding:' + mm(16) + ' ' + mm(15) + ' ' + mm(16) + ';' +
+    'background:#fff;color:#16181d;direction:rtl;text-align:justify;' +
+    'font:' + pt(11.4) + '/1.72 David,"Frank Ruehl CLM","Times New Roman",serif';
+  return d;
+}
+
+/* פסקה גבוהה מעמוד שלם מפוצלת בגבול מילה, עם שימור הסגנון שלה.
+   בלי זה היא נכנסת לעמוד, חורגת, ונחתכת ב-overflow — כלומר לשון
+   מקור נעלמת בשקט. בית יוסף של סימן שלם הוא בדיוק המקרה הזה. */
+function richSplit(pg, el){
+  var marker = el.querySelector ? el.querySelector('.seg') : null;
+  var holder = el;
+  /* הטקסט יושב בצומת הטקסט האחרון; את סמן הקטע משאירים בחלק הראשון. */
+  var full = '';
+  var i, kids = holder.childNodes;
+  for(i = 0; i < kids.length; i++)
+    if(kids[i].nodeType === 3) full += kids[i].nodeValue;
+  if(!full.trim()) return null;
+  var words = full.split(/(\s+)/);
+  /* מנקים את צומתי הטקסט ומשאירים אחד שאותו נגדיל מילה-מילה. */
+  for(i = kids.length - 1; i >= 0; i--)
+    if(kids[i].nodeType === 3) holder.removeChild(kids[i]);
+  var tn = document.createTextNode('');
+  holder.appendChild(tn);
+  pg.appendChild(holder);
+  var fit = '', k = 0;
+  while(k < words.length){
+    tn.nodeValue = fit + words[k];
+    if(pg.scrollHeight > pg.clientHeight + 1) break;
+    fit += words[k]; k++;
+  }
+  if(k === 0){ fit = words[0] || ''; k = 1; }      /* תמיד להתקדם */
+  tn.nodeValue = fit;
+  if(k >= words.length) return null;
+  var rest = document.createElement(holder.tagName);
+  rest.style.cssText = holder.style.cssText;
+  rest.className = holder.className;
+  rest.textContent = words.slice(k).join('').replace(/^\s+/, '');
+  if(marker) rest.style.paddingInlineStart = '0';   /* בלי סמן כפול */
+  return rest;
+}
+
+function richPaginate(items){
+  var host = pdfHolder();
+  document.body.appendChild(host);
+  var pages = [], pg = null, put = 0, guard = 0;
+
+  function newPage(){
+    pg = richPageEl();
+    host.appendChild(pg);
+    pdfBsd(pg);
+    pages.push(pg);
+    put = 0;
+  }
+
+  var i = 0;
+  while(i < items.length && guard++ < 1200){
+    var it = items[i];
+    if(!pg || it.brk === 'page' || (put > 0 && it.full)) newPage();
+    pg.appendChild(it.el);
+    if(pg.scrollHeight > pg.clientHeight + 1){
+      pg.removeChild(it.el);
+      if(put === 0){
+        var rest = richSplit(pg, it.el);
+        if(rest){ items[i] = { el: rest, brk: 'page' }; continue; }
+        i++; continue;                              /* לא מתפצל - משאירים */
+      }
+      /* כותרת שנשארה לבד בתחתית העמוד עוברת איתו (break-after:avoid) */
+      if(put > 0 && items[i - 1] && items[i - 1].keep && pg.lastChild === items[i - 1].el){
+        pg.removeChild(items[i - 1].el);
+        put--;
+        if(put === 0){ newPage(); pg.appendChild(items[i - 1].el); put = 1; }
+        else { newPage(); pg.appendChild(items[i - 1].el); put = 1; }
+      } else {
+        newPage();
+      }
+      continue;
+    }
+    i++; put++;
+  }
+  return { host: host, pages: pages };
+}
+
+/* צילום העמודים ושמירה — אותו מסלול של `savePdf`, עם עמודים שהוכנו
+   כבר. מספור בתחתית מעל שני עמודים, כמו שם. */
+function savePdfPages(name, P, btn, token){
+  var old = btn ? btn.textContent : '';
+  if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
+  function done(){
+    pdfCleanup();
+    if(btn){ btn.textContent = old; btn.disabled = false; }
+  }
+  pdfNumber(P.pages);
+  var opts = pdfOpts(name), pdf = null, i = 0;
+  function step(){
+    if(token && token.off) return Promise.resolve(null);
+    if(i >= P.pages.length) return Promise.resolve(true);
+    if(btn && P.pages.length > 1) btn.textContent = 'מכין… ' + (i + 1) + '/' + P.pages.length;
+    var pg = P.pages[i];
+    if(i === 0){
+      return window.html2pdf().set(opts).from(pg).toPdf().get('pdf').then(function(d){
+        pdf = d;
+        var n = pdf.internal.getNumberOfPages();
+        while(n > 1){ pdf.deletePage(n); n--; }
+        i++; return step();
+      });
+    }
+    return window.html2pdf().set(opts).from(pg).toCanvas().get('canvas').then(function(cv){
+      pdf.addPage();
+      pdf.addImage(cv.toDataURL('image/jpeg', 0.95), 'JPEG', 0, 0,
+                   pdf.internal.pageSize.getWidth(), pdf.internal.pageSize.getHeight());
+      i++; return step();
+    });
+  }
+  return step().then(function(ok){
+    if(ok && pdf) pdf.save(name);
+    done();
+    return !!ok;
+  }).catch(function(e){ done(); throw e; });
+}
+
+function savePdfRich(name, items, btn, token){
+  return loadScript(CDN.html2pdf).then(function(){
+    return savePdfPages(name, richPaginate(items), btn, token);
+  });
+}
+
+/* ---------- עזרי בנייה ---------- */
+function el(tag, css, text){
+  var d = document.createElement(tag);
+  if(css) d.style.cssText = css;
+  if(text != null) d.textContent = String(text);
+  return d;
+}
+/* HTML מהמודל: רק התגים שמותרים ב-`halacha.clean_html`. כל השאר
+   נמחק — לא נחסם, נמחק, כדי שתג שבור לא יבלע פסקה שלמה. */
+var HAL_OK = { b:1, br:1, ul:1, li:1, table:1, tr:1, th:1, td:1, p:1, i:1 };
+function halHtml(s){
+  s = String(s == null ? '' : s);
+  s = s.replace(/<(\/?)\s*([a-zA-Z0-9]+)[^>]*>/g, function(all, sl, nm){
+    return HAL_OK[nm.toLowerCase()] ? '<' + sl + nm.toLowerCase() + '>' : '';
+  });
+  return s.replace(/&(?!(?:[a-z]+|#\d+);)/g, '&amp;');
+}
+function halNode(tag, css, html){
+  var d = document.createElement(tag);
+  if(css) d.style.cssText = css;
+  d.innerHTML = halHtml(html);
+  /* עיצוב הטבלאות של הסיכום, כמו ב-halacha.CSS */
+  var t = d.querySelectorAll ? d.querySelectorAll('table') : [];
+  var i, j;
+  for(i = 0; i < t.length; i++){
+    t[i].style.cssText = 'width:100%;border-collapse:collapse;margin:' + mm(1) +
+      ' 0 ' + mm(1.5) + ';font-size:' + pt(11.6) + ';line-height:1.28';
+    var th = t[i].querySelectorAll('th');
+    for(j = 0; j < th.length; j++)
+      th[j].style.cssText = 'background:#5a2d0c;color:#fff;padding:' + mm(1.1) + ' ' +
+        mm(1.8) + ';font-weight:bold';
+    var td = t[i].querySelectorAll('td');
+    for(j = 0; j < td.length; j++)
+      td[j].style.cssText = 'border:1px solid #d8c6ae;padding:' + mm(1) + ' ' +
+        mm(1.8) + ';vertical-align:top' + (j % 2 ? ';background:#fcf8f2' : '');
+  }
+  var ul = d.querySelectorAll ? d.querySelectorAll('ul') : [];
+  for(i = 0; i < ul.length; i++)
+    ul[i].style.cssText = 'margin:' + mm(0.5) + ' 0 ' + mm(1) + ';padding-right:' + mm(5);
+  return d;
+}
+/* הטקסט הנקי של אלמנט, לתצוגה ולהעתקה. */
+function richText(items){
+  var out = [], i;
+  for(i = 0; i < items.length; i++){
+    var t = (items[i].el.innerText || items[i].el.textContent || '').replace(/ /g, ' ');
+    t = t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    if(t) out.push(t);
+  }
+  return out.join('\n\n');
+}
+
+/* ===================================================================
+   📜 דף מקורות — הפורט של `sheetlib/compose.py` + `templates/sheet.css`
+   ===================================================================
+   בלי מודל, בלי מכסה: הלשון באה מספריא והעימוד נעשה כאן. זה בדיוק
+   מה שעושה הבוט, ולכן התוצר זהה בתוכן ובמבנה.                     */
+
+var SH = {
+  ink: '#16181d', ink2: '#3d434e', muted: '#6b7280',
+  accent: '#1f3352', accent2: '#8c2f39', gold: '#9a7422',
+  rule: '#d7d3cc', tint: '#f6f4f0'
+};
+
+function shCover(title, sub, scope){
+  var d = el('div', 'height:' + mm(250) + ';display:flex;flex-direction:column;' +
+    'justify-content:center;text-align:center');
+  d.appendChild(el('div', 'font-size:' + pt(12.5) + ';color:' + SH.accent +
+    ';letter-spacing:.22em;margin-bottom:' + mm(5), 'דף מקורות'));
+  d.appendChild(el('div', 'font-size:' + pt(10.5) + ';color:' + SH.muted +
+    ';letter-spacing:.14em;margin-bottom:' + mm(12), 'עוזר הכתיבה'));
+  d.appendChild(el('h1', 'font-size:' + pt(31) + ';margin:0;font-family:David,serif', title));
+  if(sub) d.appendChild(el('div', 'font-size:' + pt(13.5) + ';color:' + SH.accent2 +
+    ';margin-top:' + mm(5), sub));
+  var orn = el('div', 'width:' + mm(52) + ';height:2px;background:' + SH.gold +
+    ';margin:' + mm(11) + ' auto');
+  d.appendChild(orn);
+  if(scope) d.appendChild(el('div', 'font-size:' + pt(11) + ';color:' + SH.ink2 +
+    ';line-height:2.1;max-width:' + mm(128) + ';margin:0 auto', scope));
+  d.appendChild(el('div', 'margin-top:' + mm(22) + ';font-size:' + pt(9.5) + ';color:' +
+    SH.muted + ';line-height:1.9', 'לשון המקורות מספריא · להדפסה וללימוד בכיתה'));
+  return d;
+}
+
+function shToc(labels){
+  var items = [];
+  items.push({ el: el('h2', 'font-size:' + pt(17) + ';color:' + SH.accent + ';margin:0 0 ' +
+    mm(2) + ';font-family:David,serif', 'מפתח המקורות'), brk: 'page', keep: true });
+  items.push({ el: el('div', 'font-size:' + pt(10) + ';color:' + SH.muted + ';margin:0 0 ' +
+    mm(8) + ';text-align:right', 'לפי סדר הרשימה שנשלחה'), keep: true });
+  var i;
+  for(i = 0; i < labels.length; i++){
+    var li = el('div', 'display:flex;align-items:baseline;gap:' + mm(4) + ';padding:' +
+      mm(2.6) + ' 0;border-bottom:1px dotted ' + SH.rule + ';font-size:' + pt(11));
+    li.appendChild(el('span', 'font-family:David,serif;font-size:' + pt(8.6) +
+      ';color:#fff;background:' + SH.accent + ';min-width:' + mm(7) + ';height:' + mm(6.5) +
+      ';line-height:' + mm(6.5) + ';padding:0 ' + mm(1.2) + ';text-align:center;' +
+      'border-radius:' + mm(3.5) + ';flex:none', hnum(i + 1)));
+    li.appendChild(el('span', 'font-weight:700', labels[i]));
+    items.push({ el: li });
+  }
+  items.push({ el: el('div', 'margin-top:' + mm(9) + ';padding:' + mm(4) + ' ' + mm(5) +
+    ';background:' + SH.tint + ';border-right:3px solid ' + SH.gold + ';font-size:' +
+    pt(9.6) + ';color:' + SH.ink2 + ';line-height:1.8;text-align:right',
+    'המספרים בשוליים הם מספרי הקטעים בספריא, לניווט בשיעור. ' +
+    'הלשון מובאת כפי שהיא, בלי ניסוח מחדש.') });
+  return items;
+}
+
+function shHead(kicker, h2, scope){
+  var out = [];
+  var box = el('div', 'border-bottom:2px solid ' + SH.accent + ';padding-bottom:' +
+    mm(3.5) + ';margin-bottom:' + mm(5));
+  if(kicker) box.appendChild(el('div', 'font-family:David,serif;font-size:' + pt(8.6) +
+    ';letter-spacing:.19em;color:' + SH.accent2 + ';margin-bottom:' + mm(1.5), kicker));
+  box.appendChild(el('h2', 'font-size:' + pt(20) + ';margin:0;color:' + SH.accent +
+    ';font-family:David,serif', h2));
+  if(scope) box.appendChild(el('div', 'margin-top:' + mm(2) + ';font-size:' + pt(9.6) +
+    ';color:' + SH.muted, scope));
+  out.push({ el: box, brk: 'page', keep: true });
+  return out;
+}
+
+function shPartLabel(text, color, bg){
+  return { el: el('div', 'font-family:David,serif;font-size:' + pt(11) + ';font-weight:700;' +
+    'letter-spacing:.18em;padding:' + mm(2.2) + ' 0;text-align:center;' +
+    'border-top:1px solid ' + SH.rule + ';border-bottom:1px solid ' + SH.rule +
+    ';margin:' + mm(6) + ' 0 ' + mm(4) + ';color:' + color +
+    (bg ? ';background:' + bg : ''), text), keep: true };
+}
+
+/* פסקה עם מספר הקטע בשוליים — `.p` / `.gp` ב-sheet.css */
+function shPara(n, text, big){
+  var d = el('div', 'margin:0 0 ' + mm(3.4) + ';padding-right:' + mm(9) +
+    ';position:relative;font-size:' + pt(big ? 12 : 11.4) + ';line-height:' +
+    (big ? '1.8' : '1.74'));
+  var seg = el('span', 'position:absolute;right:0;top:.35em;font-family:David,serif;' +
+    'font-size:' + pt(8) + ';color:' + SH.muted + ';min-width:' + mm(7) +
+    ';text-align:left;padding-left:' + mm(2) + ';border-left:1px solid ' + SH.rule, n);
+  seg.className = 'seg';
+  d.appendChild(seg);
+  d.appendChild(document.createTextNode(text));
+  return { el: d };
+}
+
+/* סעיף שולחן ערוך — תג מספר ואחריו הלשון בקופסה, כמו `.sa-text` */
+function shSeif(num, text){
+  var out = [];
+  var head = el('div', 'margin:0 0 ' + mm(3));
+  head.appendChild(el('span', 'display:inline-block;font-family:David,serif;font-size:' +
+    pt(10.5) + ';font-weight:700;color:#fff;background:' + SH.accent + ';padding:' +
+    mm(1.2) + ' ' + mm(5) + ';border-radius:2px;letter-spacing:.08em', 'סעיף ' + num));
+  out.push({ el: head, keep: true });
+  out.push({ el: el('div', 'font-size:' + pt(12.2) + ';line-height:1.82;margin:0 0 ' +
+    mm(4.5) + ';padding:' + mm(4) + ' ' + mm(5) + ';background:' + SH.tint +
+    ';border-right:4px solid ' + SH.accent + ';border-radius:2px', text) });
+  return out;
+}
+
+var SH_COMM = { 'סמ״ע': '#1f3352', 'נתיבות המשפט': '#5a3a6e', 'ש״ך': '#8c2f39',
+  'פתחי תשובה': '#6b4a17', 'ט״ז': '#14596b', 'מגן אברהם': '#2f5d3a',
+  'באר היטב': '#5a3a6e', 'ביאור הגר״א': '#14596b', 'רבי עקיבא איגר': '#8c2f39' };
+
+function shComm(label, segs){
+  var out = [], color = SH_COMM[label] || SH.accent;
+  out.push({ el: el('div', 'font-family:David,serif;font-size:' + pt(9.6) +
+    ';font-weight:700;letter-spacing:.1em;margin:' + mm(4) + ' 0 ' + mm(1.8) +
+    ';color:' + color, label), keep: true });
+  var i;
+  for(i = 0; i < segs.length; i++){
+    var d = el('div', 'font-size:' + pt(10.6) + ';line-height:1.78;margin:0 0 ' +
+      mm(2.8) + ';padding-right:' + mm(5) + ';border-right:2px solid ' + color +
+      ';color:' + SH.ink2);
+    d.appendChild(el('span', 'font-family:David,serif;font-size:' + pt(8.4) + ';color:' +
+      SH.muted + ';margin-left:' + mm(2.5) + ';white-space:nowrap', 'ס״ק ' + hnum(i + 1)));
+    d.appendChild(document.createTextNode(' ' + segs[i]));
+    out.push({ el: d });
+  }
+  return out;
+}
+
+function shColophon(notes){
+  var out = [];
+  out.push({ el: el('h2', 'font-size:' + pt(15) + ';color:' + SH.accent + ';margin:0 0 ' +
+    mm(4) + ';font-family:David,serif', 'הערות הדף'), brk: 'page', keep: true });
+  var ul = el('div', 'font-size:' + pt(9.6) + ';color:' + SH.ink2 + ';line-height:1.9');
+  var i;
+  for(i = 0; i < notes.length; i++)
+    ul.appendChild(el('div', 'margin-bottom:' + mm(1.8), '• ' + notes[i]));
+  out.push({ el: ul });
+  return out;
+}
+
+/* מבנה ← עמודים. `sheet` הוא מה ש-`sefariaSource` מחזיר ב-`sheet`. */
+function sheetDoc(sh, missing, raw){
+  var items = [], labels = [], i, j;
+  var blocks = sh.blocks || [];
+  for(i = 0; i < blocks.length; i++) labels.push(blocks[i].label);
+
+  items.push({ el: shCover(sh.title, sh.subtitle || '', sh.scope || ''), brk: 'page', full: true });
+  if(labels.length > 1) items = items.concat(shToc(labels));
+
+  for(i = 0; i < blocks.length; i++){
+    var b = blocks[i];
+    items = items.concat(shHead(b.kicker || 'מקור ' + hnum(i + 1), b.label, b.scope || ''));
+    if(b.kind === 'sa'){
+      items.push(shPartLabel('שולחן ערוך', SH.accent));
+      for(j = 0; j < (b.seifim || []).length; j++)
+        items = items.concat(shSeif(hnum(j + 1), b.seifim[j]));
+    } else if(b.kind === 'comm'){
+      items = items.concat(shComm(b.label, b.segs || []));
+    } else {
+      var big = (b.kind === 'source');
+      if(b.kind === 'tur') items.push(shPartLabel('טור', SH.accent2));
+      if(b.kind === 'by') items.push(shPartLabel('בית יוסף', '#7a4a12', '#faf8f4'));
+      for(j = 0; j < (b.paras || []).length; j++)
+        items.push(shPara(j + 1, b.paras[j], big));
+    }
+  }
+
+  var notes = ['הלשון הובאה מספריא (sefaria.org) ומוצגת כפי שהיא, בלי ניסוח מחדש.'];
+  if(missing && missing.length)
+    notes.push('לא נמצא בספריא ולכן אינו בדף: ' + missing.join(', ') + '.');
+  if(raw) notes.push('הבקשה כפי שנכתבה: ' + raw);
+  notes.push('מספרי הקטעים בשוליים הם מספרי הקטעים בספריא, לניווט בשיעור.');
+  notes.push('הדף מופק אוטומטית; לפני השיעור כדאי לעבור על הלשון במקור.');
+  items = items.concat(shColophon(notes));
+  return items;
+}
+
+/* ===================================================================
+   📘 סיכום הלכתי בהרחבה — הפורט של `halacha.py`
+   ===================================================================
+   המודל מחזיר JSON מובנה, לא טקסט חופשי. זה כל ההבדל: המבנה הוא מה
+   שמחייב אותו לעבור מקור אחר מקור, לתת תווית לכל שורה, ולכתוב מסקנה
+   לכל יחידה ולכל החומר. ההנחיה למטה היא `halacha.SYSTEM` בקיצור
+   שמתאים לפנייה אחת מהדפדפן (שם הוא כותב קבצים; כאן הוא מחזיר JSON).
+   =================================================================== */
+
+var HAL_SYS =
+'אתה מסכם חומר הלכתי-תורני למחנך בבית מדרש (כיתה ז׳ תורנית, הלכה בכיתה ח׳, כולל דיינות).\n' +
+'הסיכום יוצא כ-PDF מעוצב. אתה לא כותב HTML ולא עיצוב — אתה מחזיר **JSON תקין אחד בלבד**, והאפליקציה מעצבת.\n\n' +
+'הקונספט (חובה):\n' +
+'1. כל מקור בנפרד, לפי סדר החומר. בשו"ע: לכל סימן — קודם הטור אות אחר אות, אחר כך הבית יוסף אות אחר אות,\n' +
+'   ואחר כך השולחן ערוך סעיף אחר סעיף עם הרמ"א ונושאי הכלים (כל נושא כלים בנפרד, בשמו).\n' +
+'   בחומר אחר: מקור אחר מקור (גמרא, רש"י, תוספות, רמב"ם), ובתוכו סעיף אחר סעיף.\n' +
+'2. בכל יחידה שורות עם תווית קבועה (kind): main (מה המקור אומר), src ("המקור"), q ("השאלה"/"המחלוקת"),\n' +
+'   why ("הטעם"), ex ("דוגמה" — מקרה מהחיים, קצר), dec ("ההכרעה"), rm ("רמ״א"),\n' +
+'   nk ("נושאי כלים" — רשימת who עם name ו-html). לא כל שורה בכל יחידה — רק מה שיש בו תוכן אמיתי.\n' +
+'3. מחלוקות וחלוקות (כמה שיטות, כמה מקרים) — בטבלה (<table><tr><th>/<td>). דיון מרכזי שכל הסימן תלוי בו —\n' +
+'   בלוק sugya בשלבים ממוספרים: המקור, הפירושים, הקושיה, התירוץ, השיטות, ההכרעה.\n' +
+'4. שפה ברורה ונעימה, משפטים קצרים, מושגים מוסברים בפעם הראשונה. ציטוטים קצרים מהמקור במירכאות. <b> להדגשת העיקר.\n' +
+'5. דיוק: רק מה שכתוב בחומר. לא להמציא שיטות, מראי מקום או הכרעות.\n' +
+'6. אורך: הרחבה אמיתית — כרבע מהיקף החומר שנמסר. אל תדלג על מקורות כדי לקצר; דחוס את הכתיבה:\n' +
+'   כל דין בשורה אחת (מה הדין + הטעם), מחלוקת — טבלה, ומה שנאמר בטור אין לחזור עליו בבית יוסף.\n' +
+'7. **מסקנות — חובה, ואין סיכום בלעדיהן:** בכל יחידה שדה conclusion — ההכרעה בשורה-שתיים בלשון פוסקת\n' +
+'   ("למעשה: X, וכדעת הרמ״א"), ולא תקציר של הדיון. מה שלא הוכרע — לאמר במפורש ("בזה נחלקו ולא הוכרע;\n' +
+'   למעשה נוהגים כ..."/"צריך שאלת רב"). שתיקה אינה מסקנה.\n\n' +
+'HTML מותר בתוך שדות html בלבד: <b> <br> <ul> <li> <table> <tr> <th> <td> <p>. שום דבר אחר.\n' +
+'החזר JSON אחד בלי שום טקסט לפניו ואחריו, בלי גדרות ```:\n' +
+'{"title":"כותרת קצרה","subtitle":"מה החומר","order":"שורת הסדר",\n' +
+' "unit":{"title":"א׳ · סימן קצ״ט","subtitle":"כותרת הסימן · היקף",\n' +
+'   "conclusion":{"html":"<b>למעשה:</b> ההכרעה בשורה-שתיים. חובה."},\n' +
+'   "parts":[{"kind":"tur","label":"📜 הטור","note":"שלוש אותיות","blocks":[\n' +
+'     {"type":"item","heading":"טור אות א׳ · נושא","src":"",\n' +
+'      "rows":[{"kind":"main","label":"הטור","html":"..."},{"kind":"why","label":"הטעם","html":"..."}]},\n' +
+'     {"type":"sugya","title":"🔎 הסוגיה: ...","intro":"למה זה חשוב","steps":[{"title":"הגמרא: ...","html":"..."}]},\n' +
+'     {"type":"note","html":"הערה קצרה"}]},\n' +
+'    {"kind":"by","label":"📘 הבית יוסף","note":"המקורות, השיטות וההכרעה","blocks":[]},\n' +
+'    {"kind":"sa","label":"⚖️ השולחן ערוך","note":"עם הרמ״א ונושאי הכלים","blocks":[]}]},\n' +
+' "foundation":{"title":"🔑 היסוד","html":"פסקה אחת: הרעיון שעליו עומד החומר"},\n' +
+' "glossary":[{"term":"מושג","def":"הסבר קצר"}],\n' +
+' "summary_table":[{"ref":"קצ״ט א׳","topic":"נושא","rule":"הכלל בקצרה"}],\n' +
+' "principles":["עיקרון שחוזר בחומר"],\n' +
+' "conclusions":["מסקנה מעשית בלשון פוסקת (3-7)"]}\n' +
+'בחומר שאינו טור/שו"ע: parts עם kind "source" ו-label כמו "📜 הגמרא" / "📘 הרמב״ם".';
+
+/* JSON מהמודל, בסלחנות — אותו לקח של `halacha.read_json`: שלושה
+   מנועים שונים כותבים כאן, ואחד מהם יסגור סוגר מיותר. אובייקט תקין
+   שנזרק בשקט הוא סימן שלם שנעלם מהסיכום. */
+function halParse(txt){
+  var s = String(txt == null ? '' : txt).trim();
+  s = s.replace(/^`{3}(?:json)?\s*/i, '').replace(/\s*`{3}$/, '');
+  var i = s.indexOf('{');
+  if(i < 0) return null;
+  s = s.substring(i);
+  try { return JSON.parse(s); } catch(e){}
+  /* חותכים מהסוף עד לסוגר שמאזן — JSON.parse אין לו raw_decode. */
+  var depth = 0, inStr = false, esc = false, k;
+  for(k = 0; k < s.length; k++){
+    var c = s.charAt(k);
+    if(inStr){
+      if(esc) esc = false;
+      else if(c === '\\') esc = true;
+      else if(c === '"') inStr = false;
+      continue;
+    }
+    if(c === '"') inStr = true;
+    else if(c === '{') depth++;
+    else if(c === '}'){
+      depth--;
+      if(depth === 0){
+        try { return JSON.parse(s.substring(0, k + 1)); } catch(e2){ return null; }
+      }
+    }
+  }
+  return null;
+}
+
+var HAL_PART_COLORS = { tur: ['#2f6f73', '#1f5357', '#e3f0f0'],
+  by: ['#3b4f8a', '#2c3c6e', '#e6eaf5'], sa: ['#7a3e12', '#7a3e12', '#f4e6d4'] };
+var HAL_SRC_COLORS = [['#2f6f73', '#1f5357', '#e3f0f0'], ['#3b4f8a', '#2c3c6e', '#e6eaf5'],
+  ['#7a3e12', '#7a3e12', '#f4e6d4'], ['#5b6d2f', '#445224', '#eef2e2'],
+  ['#8a3b6a', '#6c2c52', '#f5e7ef']];
+var HAL_LBL = { ex: '#4f8f6d', rm: '#b5762f', nk: '#6d5fa3', why: '#8a8a8a',
+  q: '#a0413c', dec: '#1f1f1f', src: '#3b4f8a' };
+var HAL_LBL_TXT = { src: 'המקור', q: 'השאלה', why: 'הטעם', ex: 'דוגמה',
+  dec: 'ההכרעה', rm: 'רמ״א', nk: 'נושאי כלים' };
+
+function halColors(kind, idx){
+  return HAL_PART_COLORS[kind] || HAL_SRC_COLORS[idx % HAL_SRC_COLORS.length];
+}
+
+/* המסקנות, בכל צורה שהמודל יחזיר אותן — מחרוזת, אובייקט או רשימה.
+   מבנה נוקשה היה מפיל אותן בשקט, וזה הכשל שהתיקון בא למנוע. */
+function halConcl(v){
+  if(!v) return '';
+  if(typeof v === 'string') return halHtml(v).trim();
+  if(v instanceof Array){
+    var parts = [], i;
+    for(i = 0; i < v.length; i++){ var p = halConcl(v[i]); if(p) parts.push(p); }
+    if(!parts.length) return '';
+    if(parts.length === 1) return parts[0];
+    return '<ul><li>' + parts.join('</li><li>') + '</li></ul>';
+  }
+  if(typeof v === 'object'){
+    var keys = ['html', 'text', 'conclusion', 'body'], k;
+    for(k = 0; k < keys.length; k++) if(v[keys[k]]) return halConcl(v[keys[k]]);
+    if(v.items || v.list) return halConcl(v.items || v.list);
+  }
+  return '';
+}
+
+function halBox(title, html, green){
+  var bg = green ? '#eef7ef' : '#fbf4ea', line = green ? '#2e7d4f' : '#c58b4a';
+  var d = el('div', 'background:' + bg + ';border-right:4px solid ' + line + ';padding:' +
+    mm(2) + ' ' + mm(3.5) + ';margin:' + mm(2.5) + ' 0;border-radius:' + mm(1.5));
+  d.appendChild(el('span', 'font-weight:bold;display:block;margin-bottom:' + mm(0.6) +
+    ';color:' + (green ? '#1b5e34' : '#5a2d0c'), title));
+  var body = halNode('div', 'font-size:' + pt(12.4), html);
+  d.appendChild(body);
+  return { el: d };
+}
+
+function halRow(row, main){
+  var kind = row.kind || 'main';
+  var label = row.label || HAL_LBL_TXT[kind] || '';
+  var wrap = el('div', 'display:flex;gap:' + mm(2.5) + ';margin:0 0 ' + mm(1.5) + ';align-items:flex-start');
+  var lbl = el('div', 'flex:none;width:' + mm(24) + ';font-size:' + pt(10.8) +
+    ';font-weight:bold;text-align:center;border-radius:' + mm(1.2) + ';padding:' +
+    mm(0.6) + ' ' + mm(1) + ';margin-top:' + mm(0.9) + ';line-height:1.22;color:#fff;' +
+    'background:' + (kind === 'main' ? main : (HAL_LBL[kind] || '#8a8a8a')), label);
+  wrap.appendChild(lbl);
+  var body;
+  if(kind === 'nk'){
+    body = el('div', 'flex:1 1 auto;font-size:' + pt(12.4));
+    var ul = el('ul', 'list-style:none;padding:0;margin:0'), i;
+    for(i = 0; i < (row.who || []).length; i++){
+      var w = row.who[i];
+      var li = halNode('li', 'margin:0 0 ' + mm(0.9),
+        '<b>' + String(w.name || '') + ':</b> ' + String(w.html || ''));
+      li.querySelector('b') && (li.querySelector('b').style.color = '#4b3f7a');
+      ul.appendChild(li);
+    }
+    body.appendChild(ul);
+  } else if(kind === 'ex'){
+    body = el('div', 'flex:1 1 auto');
+    body.appendChild(halNode('div', 'background:#eef5f1;border-radius:' + mm(1.2) +
+      ';padding:' + mm(1) + ' ' + mm(2.5) + ';font-size:' + pt(12.4), row.html));
+  } else {
+    body = halNode('div', 'flex:1 1 auto;font-size:' + pt(12.4), row.html);
+  }
+  wrap.appendChild(body);
+  return { el: wrap };
+}
+
+function halUnitNodes(u, idx){
+  var items = [], i, j, k;
+  var head = el('div', 'border-radius:' + mm(2) + ';padding:' + mm(2) + ' ' + mm(4) +
+    ';background:#7a3e12;color:#fff');
+  head.appendChild(el('div', 'font-size:' + pt(21) + ';font-weight:bold;line-height:1.2', u.title || ''));
+  if(u.subtitle) head.appendChild(el('div', 'font-size:' + pt(13) + ';opacity:.92', u.subtitle));
+  items.push({ el: head, brk: 'page', keep: true });
+
+  var parts = u.parts || [];
+  for(i = 0; i < parts.length; i++){
+    var part = parts[i], col = halColors(part.kind, i);
+    var ph = el('div', 'display:flex;align-items:center;gap:' + mm(3) + ';margin:' +
+      mm(3.5) + ' 0 ' + mm(1.5));
+    ph.appendChild(el('span', 'font-size:' + pt(17) + ';font-weight:bold;padding:' +
+      mm(0.6) + ' ' + mm(4) + ';border-radius:' + mm(1.5) + ';color:#fff;white-space:nowrap;' +
+      'background:' + col[0], part.label || ''));
+    ph.appendChild(el('i', 'flex:1;height:2px;background:' + col[0]));
+    if(part.note) ph.appendChild(el('small', 'font-size:' + pt(11) + ';color:#666', part.note));
+    items.push({ el: ph, keep: true });
+
+    var blocks = part.blocks || [];
+    for(j = 0; j < blocks.length; j++){
+      var bl = blocks[j], t = bl.type || 'item';
+      if(t === 'note'){
+        items.push({ el: halNode('div', 'font-size:' + pt(11.5) + ';color:#6b6b6b;margin:' +
+          mm(1) + ' 0 ' + mm(2), bl.html) });
+      } else if(t === 'sugya'){
+        var box = el('div', 'border:2px solid #3b4f8a;border-radius:' + mm(2) + ';padding:' +
+          mm(2.5) + ' ' + mm(3.5) + ' ' + mm(1.5) + ';margin:' + mm(3) + ' 0;background:#fafbfe');
+        box.appendChild(el('div', 'font-size:' + pt(16) + ';font-weight:bold;color:#2c3c6e;' +
+          'margin-bottom:' + mm(1), bl.title || ''));
+        if(bl.intro) box.appendChild(halNode('div', 'font-size:' + pt(11.5) + ';color:#6b6b6b;' +
+          'margin-bottom:' + mm(1.5), bl.intro));
+        for(k = 0; k < (bl.steps || []).length; k++){
+          var st = bl.steps[k];
+          var sr = el('div', 'display:flex;gap:' + mm(2) + ';margin:0 0 ' + mm(2) + ';align-items:flex-start');
+          sr.appendChild(el('div', 'flex:none;background:#3b4f8a;color:#fff;font-weight:bold;' +
+            'border-radius:50%;width:' + mm(7.5) + ';height:' + mm(7.5) + ';text-align:center;' +
+            'line-height:' + mm(7.5) + ';font-size:' + pt(12) + ';margin-top:' + mm(0.6), k + 1));
+          var sb = el('div', 'flex:1 1 auto');
+          sb.appendChild(el('div', 'font-weight:bold;color:#2c3c6e;font-size:' + pt(12.4), st.title || ''));
+          sb.appendChild(halNode('div', 'font-size:' + pt(12.4), st.html));
+          sr.appendChild(sb);
+          box.appendChild(sr);
+        }
+        items.push({ el: box });
+      } else {
+        var h3 = el('div', 'font-size:' + pt(14.5) + ';font-weight:bold;margin:' + mm(3) +
+          ' 0 ' + mm(1.2) + ';padding:' + mm(0.7) + ' ' + mm(2.5) + ';border-radius:' + mm(1) +
+          ';line-height:1.25;color:' + col[1] + ';background:' + col[2] +
+          ';border-right:5px solid ' + col[0], bl.heading || '');
+        if(bl.src) h3.appendChild(el('span', 'font-size:' + pt(11) + ';color:#777;font-weight:normal',
+          ' ' + bl.src));
+        items.push({ el: h3, keep: true });
+        for(k = 0; k < (bl.rows || []).length; k++) items.push(halRow(bl.rows[k], col[0]));
+      }
+    }
+  }
+  var cb = halConcl(u.conclusion);
+  if(cb) items.push(halBox('✅ למעשה · מסקנת ' + halUnitLabel(u), cb, true));
+  return items;
+}
+
+function halUnitLabel(u){
+  var t = String((u && u.title) || '').trim();
+  if(t.indexOf('·') >= 0) t = t.split('·').pop().trim();
+  return t || 'היחידה';
+}
+
+function halDoc(meta, units){
+  var items = [], i;
+  var ttl = el('h1', 'font-size:' + pt(25) + ';margin:0 0 ' + mm(1) + ';color:#5a2d0c;' +
+    'text-align:center;line-height:1.15', meta.title || 'סיכום הלכתי');
+  items.push({ el: ttl, brk: 'page', keep: true });
+  var sub = el('div', 'text-align:center;font-size:' + pt(12.5) + ';color:#6b5b4b;' +
+    'margin-bottom:' + mm(3));
+  if(meta.subtitle) sub.appendChild(el('div', '', meta.subtitle));
+  if(meta.order) sub.appendChild(el('div', '', meta.order));
+  items.push({ el: sub, keep: true });
+
+  /* מפתח היחידות — בלי מספרי עמוד: הם נקבעים בעימוד עצמו, והבטחת
+     מספר שאינו נכון גרועה מהיעדרו. */
+  var key = el('div', 'margin:' + mm(2) + ' 0 ' + mm(3) + ';font-size:' + pt(12.2));
+  for(i = 0; i < units.length; i++){
+    var r = el('div', 'display:flex;gap:' + mm(2) + ';border-bottom:1px solid #e3d3bd;padding:' +
+      mm(1.1) + ' ' + mm(2));
+    r.appendChild(el('div', 'flex:none;width:' + mm(8) + ';font-weight:bold;color:#7a3e12;' +
+      'text-align:center', i + 1));
+    r.appendChild(el('div', 'flex:none;font-weight:bold', units[i].title || ''));
+    r.appendChild(el('div', 'flex:1 1 auto;color:#6b5b4b', units[i].subtitle || ''));
+    key.appendChild(r);
+  }
+  items.push({ el: key });
+
+  var f = meta.foundation || {};
+  if(halConcl(f.html)) items.push(halBox(f.title || '🔑 היסוד', f.html, false));
+  if(meta.glossary && meta.glossary.length){
+    var gl = '', g;
+    for(g = 0; g < meta.glossary.length; g++)
+      gl += '<li><b>' + String(meta.glossary[g].term || '') + '</b>: ' +
+            String(meta.glossary[g].def || '') + '</li>';
+    items.push(halBox('📖 מילון קצר', '<ul>' + gl + '</ul>', false));
+  }
+
+  for(i = 0; i < units.length; i++) items = items.concat(halUnitNodes(units[i], i));
+
+  var end = el('div', 'border-radius:' + mm(2) + ';padding:' + mm(2) + ' ' + mm(4) +
+    ';background:#7a3e12;color:#fff');
+  end.appendChild(el('div', 'font-size:' + pt(21) + ';font-weight:bold', 'סיכום · הכול בטבלה אחת'));
+  end.appendChild(el('div', 'font-size:' + pt(13) + ';opacity:.92', 'לפי הסדר'));
+  items.push({ el: end, brk: 'page', keep: true });
+
+  if(meta.summary_table && meta.summary_table.length){
+    var rows = '<table><tr><th>מקום</th><th>הנושא</th><th>הכלל בקצרה</th></tr>', s;
+    for(s = 0; s < meta.summary_table.length; s++){
+      var it = meta.summary_table[s];
+      rows += '<tr><td>' + String(it.ref || '') + '</td><td>' + String(it.topic || '') +
+              '</td><td>' + String(it.rule || '') + '</td></tr>';
+    }
+    items.push({ el: halNode('div', '', rows + '</table>') });
+  }
+  if(meta.principles && meta.principles.length){
+    var pl = '', p;
+    for(p = 0; p < meta.principles.length; p++) pl += '<li>' + String(meta.principles[p]) + '</li>';
+    items.push(halBox('🧭 עקרונות שחוזרים בכל החומר', '<ul>' + pl + '</ul>', false));
+  }
+  /* המסקנות אחרונות בכוונה: הן התשובה לשאלה "אז מה הדין". */
+  var cc = halConcl(meta.conclusions);
+  if(cc) items.push(halBox('✅ המסקנות · הלכה למעשה', cc, true));
+  items.push({ el: el('div', 'font-size:' + pt(10.5) + ';color:#777;text-align:center;' +
+    'margin-top:' + mm(4), 'סיכום עזר להבנה, על פי החומר שנשלח. ' +
+    'אינו בא במקום עיון במקורות ופסיקת רב.') });
+  return items;
+}
+
+/* הרצת הסיכום: יחידה לכל חלק של החומר, פנייה אחת לכל יחידה.
+   ברצף ולא במקביל — פניות מקבילות לאותו מפתח מחזירות 429, וזה
+   מה שנמדד כאן ב-`askPaged`. */
+function halRun(keys, material, extra, say, token){
+  var chunks = splitChunks(material);
+  var units = [], meta = null, via = '';
+  return chunks.reduce(function(chain, chunk, i){
+    return chain.then(function(){
+      jobCheck(token);
+      if(say) say(chunks.length > 1 ? ('מסכם יחידה ' + (i + 1) + ' מתוך ' + chunks.length + '…')
+                                    : 'בונה את הסיכום המובנה…');
+      var head = 'החומר לסיכום' + (chunks.length > 1 ? (' (חלק ' + (i + 1) + ' מתוך ' +
+        chunks.length + ')') : '') + ':\n\n';
+      var ask = (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + head + chunk;
+      return askOne(keys, HAL_SYS, ask).then(function(r){
+        jobCheck(token);
+        if(!r || !r.text) return;
+        via = r.via;
+        var d = halParse(r.text);
+        if(d && d.unit){
+          units.push(d.unit);
+          if(!meta) meta = d;
+          else {
+            /* מה שמגיע מהיחידות הבאות מצטבר, לא נדרס: המסקנות של
+               חלק ב׳ אינן פחות נכונות מאלה של חלק א׳. */
+            meta.conclusions = (meta.conclusions || []).concat(d.conclusions || []);
+            meta.principles = (meta.principles || []).concat(d.principles || []);
+            meta.summary_table = (meta.summary_table || []).concat(d.summary_table || []);
+          }
+        } else if(d && d.parts){
+          units.push(d);
+          if(!meta) meta = d;
+        } else {
+          /* JSON שלא נפרס אינו סיבה לאבד את התוכן: היחידה נבנית
+             מהטקסט כפי שהוא, והמשתמש מקבל סיכום ולא הודעת שגיאה. */
+          units.push({ title: 'יחידה ' + (i + 1), subtitle: '',
+            parts: [{ kind: 'source', label: '📜 הסיכום', blocks: [
+              { type: 'note', html: String(r.text).replace(/[<>]/g, ' ') }] }] });
+        }
+      });
+    });
+  }, Promise.resolve()).then(function(){
+    if(!units.length) return null;
+    if(!meta) meta = {};
+    return { meta: meta, units: units, via: via +
+      (chunks.length > 1 ? (' · ' + chunks.length + ' יחידות') : '') };
+  });
+}
+
+
+/* ==== END sheet_client ==== */
 /* ---------- הרצה ---------- */
+/* ---------- ביטול (18/11/26) ----------
+   הבקשה: "כפתור ביטול שמבטל כל פעילות ומאפשר לי לבחור בכפתור אחר".
+   עד עכשיו הרצה שהתחילה נעלה את הכפתור עד שתיגמר, ובקשה ארוכה (סיכום
+   הלכתי = כמה פניות ברצף) החזיקה את המסך דקות.
+
+   `fetch` אינו נעצר באמצע, ולכן "ביטול" אינו יכול להיות רק שחרור של
+   הכפתור: הרצה שבוטלה ממשיכה לחזור מהרשת, ואם היא תכתוב לממשק אחרי
+   שהמשתמש בחר כפתור אחר — היא תדרוס את העבודה החדשה. לכן יש אסימון
+   (`jobToken`) שכל שלב בודק לפני שהוא כותב משהו. */
+var JOB = null;
+function runIdle(){
+  var b = $('go');
+  if(b) b.disabled = false;
+  if($('goTxt')) $('goTxt').textContent = 'הפעל';
+  if($('cancel')) $('cancel').classList.add('hide');
+  JOB = null;        /* אין יותר מה לבטל, ולכן גם אין כפתור */
+}
+function cancelRun(quiet){
+  if(!JOB) return false;
+  jobStop(JOB);
+  JOB = null;
+  pdfCleanup();
+  runIdle();
+  if(!quiet) note('err', 'warn', 'בוטל. אפשר לבחור כפתור אחר ולהפעיל שוב.');
+  return true;
+}
+$('cancel').onclick = function(){ cancelRun(false); };
+
 $('go').onclick = function(){
   var raw = $('txt').value.trim();
   if(!raw && !PICKED){
@@ -2490,9 +3318,14 @@ $('go').onclick = function(){
   b.disabled = true;
   $('goTxt').innerHTML = '<span class="spin"></span> עובד…';
   $('resultBox').innerHTML = '';
+  /* הרצה חדשה מבטלת את הקודמת, גם אם היא עדיין חוזרת מהרשת. */
+  jobStop(JOB);
+  JOB = jobToken();
+  var token = JOB;
+  $('cancel').classList.remove('hide');
 
   var isLink = /^https?:\/\/\S+$/.test(raw);
-  var ticket = null, srcNote = '';
+  var ticket = null, srcNote = '', sheetSrc = null;
   /* שורת ההתקדמות מוגדרת כאן, בהיקף של כל ההרצה, ולא בתוך חוליה אחת
      של השרשרת: היא נקראת גם בשלב הבאת החומר וגם בשלב הפנייה למנוע,
      ואלה שתי פונקציות נפרדות. כשהיא ישבה בפנימית, השלב השני נפל על
@@ -2528,19 +3361,19 @@ $('go').onclick = function(){
       $('pdf2').onclick = function(){ savePdf(ttl, rest, $('pdf2')); };
       call({api:'done', token:S.token, mode:'printpdf', via:'מקומי (בלי מכסה)'});
       $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
-      b.disabled = false; $('goTxt').textContent = 'הפעל';
+      runIdle();
     };
     if(PICKED && PICKED.text){ mk(PICKED.text); return; }
     if(isLink){
       $('goTxt').innerHTML = '<span class="spin"></span> קורא את הקישור…';
       readLink(raw).then(function(t2){
-        if(!t2){ b.disabled = false; $('goTxt').textContent = 'הפעל';
+        if(!t2){ runIdle();
           note('err','bad','לא הצלחתי לקרוא את הדף. נסה להדביק את הטקסט.'); return; }
         mk(t2);
       });
       return;
     }
-    if(!raw){ b.disabled = false; $('goTxt').textContent = 'הפעל';
+    if(!raw){ runIdle();
       note('err','warn','צריך טקסט, קובץ או קישור.'); return; }
     mk(raw);
     return;
@@ -2551,18 +3384,18 @@ $('go').onclick = function(){
      מהמסלול לפני בקשת הכרטיס — בלי מודל, בלי מכסה ובלי מפתח. */
   function localDone(mode, msg){
     call({api:'done', token:S.token, mode:mode, via:'מקומי (בלי מכסה)'});
-    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    runIdle();
     if(msg) note('err','ok',msg);
   }
   function localFail(e){
-    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    runIdle();
     note('err','bad',(e && e.message) || 'לא הצלחתי.');
   }
   function say2(m){ $('goTxt').innerHTML = '<span class="spin"></span> ' + m; }
 
   if(S.mode === 'scan'){
     if(!PICKED_FILES || !PICKED_FILES.length){
-      b.disabled = false; $('goTxt').textContent = 'הפעל';
+      runIdle();
       note('err','warn','צריך לצרף צילום של דף. לחץ על "📎 צרף קובץ".');
       return;
     }
@@ -2575,7 +3408,7 @@ $('go').onclick = function(){
   if(S.mode === 'squeeze'){
     var sf = PICKED_FILES && PICKED_FILES[0];
     if(!sf || !/\.pdf$/i.test(sf.name || '')){
-      b.disabled = false; $('goTxt').textContent = 'הפעל';
+      runIdle();
       note('err','warn','צריך לצרף קובץ PDF. לצילום של דף יש את "סריקת מסמך".');
       return;
     }
@@ -2628,7 +3461,7 @@ $('go').onclick = function(){
   }
 
   if(S.mode === 'luz'){
-    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    runIdle();
     var ld = luzParse(raw);
     if(!luzCount(ld)){
       /* 17/11: ההודעה הישנה הורתה "שורה שמתחילה בשעה" בלבד, וזה כבר
@@ -2684,6 +3517,7 @@ $('go').onclick = function(){
     return sefariaSource(raw, say).then(function(s){
       if(s){
         srcNote = s.note;
+        if(s.sheet){ sheetSrc = s.sheet; sheetSrc.missing = s.missing || []; }
         if(s.missing && s.missing.length) srcNote += ' · לא נמצא בספריא: ' + s.missing.join(', ');
         return 'החומר הבא הובא מספריא, והוא לשון המקור עצמה. הסתמך עליו בלבד, ' +
                'ואל תוסיף תוכן מהזיכרון שלך.\n\n' + s.text +
@@ -2712,6 +3546,33 @@ $('go').onclick = function(){
       return askGeminiImage(tkeys(ticket), ticket.system,
         (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + ask, PICKED.image);
     }
+    jobCheck(token);
+
+    /* ---------- 📜 דף מקורות: עימוד, לא פרומפט (18/11/26) ----------
+       בבוט הטקסטים דף המקורות אינו עובר במודל בכלל: `sheets.py`
+       פותר את הרשימה, שולף את הלשון מספריא, ו-`sheetlib/compose.py`
+       מעמד שער ← מפתח ← מקור לכל עמוד ← עמוד הערות. כאן היה פרומפט
+       שמחזיר טקסט חופשי, ולכן גם התוצר וגם ה-PDF יצאו אחרים לגמרי.
+       כשיש לשון מספריא — מעמדים אותה, בלי מודל ובלי מכסה. */
+    if(ticket.mode === 'sheet' && sheetSrc){
+      say('מעמד את דף המקורות…');
+      return { richKind: 'sheet', sheet: sheetSrc, raw: raw,
+               name: sheetSrc.name || 'דף מקורות', via: 'ספריא · בלי מכסה' };
+    }
+
+    /* ---------- 📘 סיכום הלכתי: JSON מובנה (18/11/26) ----------
+       בבוט המודל מחזיר יחידות מובנות (חלקים, שורות עם תווית, סוגיות,
+       מסקנה לכל יחידה), ו-`halacha.render_html` מעצב אותן. המבנה הוא
+       מה שמחייב מקור אחר מקור ומסקנה בסוף — טקסט חופשי אינו מחייב
+       כלום, וזה ההבדל שנראה בתוצר. */
+    if(ticket.mode === 'halacha'){
+      return halRun(tkeys(ticket), body, extra, say, token).then(function(h){
+        if(!h) return null;
+        return { richKind: 'halacha', meta: h.meta, units: h.units,
+                 name: h.meta.title || 'סיכום הלכתי', via: h.via };
+      });
+    }
+
     /* מצב רב-עמודי (מערך שיעור): עמוד בכל פנייה. רק כשהחומר נכנס
        בפנייה אחת - חומר שחורג מפוצל ממילא ב-`askLong`, ופיצול כפול
        היה מכפיל את מספר הפניות ושורף את המכסה. */
@@ -2720,11 +3581,50 @@ $('go').onclick = function(){
     return askLong(tkeys(ticket), ticket.system, prompt, say);
   })
   .then(function(r){
-    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    if(token.off) return;                /* בוטל בינתיים - לא לכתוב כלום */
+    runIdle();
     if(r === null) return;
+    /* ---------- תוצר מעוצב: דף מקורות / סיכום הלכתי ----------
+       הבנייה היא **פונקציה** ולא רשימה מוכנה, כי העימוד מזיז את
+       האלמנטים לתוך העמודים ומפצל פסקאות ארוכות במקום. לחיצה שנייה
+       על "הורד PDF" על אותם אלמנטים הייתה מפיקה מסמך פגום. */
+    if(r && r.richKind){
+      var build = (r.richKind === 'sheet')
+        ? function(){ return sheetDoc(r.sheet, r.sheet.missing || [], r.raw); }
+        : function(){ return halDoc(r.meta, r.units); };
+      var plain = richText(build());
+      JOB = null;
+      S.last = plain;
+      call({api:'done', token:S.token, mode:ticket.mode, via:r.via});
+      var mm2 = S.modes.filter(function(x){ return x.key===ticket.mode; })[0] || {label:''};
+      $('resultBox').innerHTML =
+        '<div class="result"><div class="meta noprint">' +
+        '<span class="pill">'+esc(mm2.label)+'</span>' +
+        '<span>'+esc(r.via || '')+'</span>' +
+        '<span class="spacer" style="flex:1"></span>' +
+        '<button class="mini" id="cp">העתק</button>' +
+        '<button class="mini" id="pdf">הורד PDF</button>' +
+        '</div><div class="out" id="outTxt"></div>' +
+        '<div class="noprint" id="nextBox"></div></div>';
+      $('outTxt').textContent = plain;
+      $('cp').onclick = function(){
+        navigator.clipboard.writeText(S.last).then(function(){
+          $('cp').textContent = 'הועתק ✓';
+          setTimeout(function(){ $('cp').textContent='העתק'; }, 1600);
+        });
+      };
+      $('pdf').onclick = function(){
+        savePdfRich((r.name || mm2.label) + '.pdf', build(), $('pdf'), null)
+          .catch(function(){ note('err','bad','לא הצלחתי להפיק את הקובץ. נסה שוב.'); });
+      };
+      drawNext(mm2, raw);
+      $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
+      return;
+    }
     if(!r || !r.text){
       note('err','bad','כל המנועים עמוסים כרגע. נסה שוב בעוד דקה.'); return;
     }
+    JOB = null;
     call({api:'done', token:S.token, mode:ticket.mode, via:r.via});
     r.mode = ticket.mode;
     r.source = srcNote;
@@ -2764,7 +3664,9 @@ $('go').onclick = function(){
     $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
   })
   .catch(function(e){
-    b.disabled = false; $('goTxt').textContent = 'הפעל';
+    runIdle();
+    if(isCancel(e)) return;              /* ביטול אינו שגיאה */
+    JOB = null;
     note('err','bad', (e && e.message) || 'שגיאה לא צפויה.');
   });
 };
