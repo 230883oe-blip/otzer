@@ -980,6 +980,7 @@ function sefariaSource(raw, say){
   return Promise.resolve(null);
 }
 
+
 /* ==== END sef_client ==== */
 
 /* ==== BEGIN files_client ==== */
@@ -1464,6 +1465,7 @@ function extractFile(file, say){
   }
   return Promise.reject(new Error('סוג הקובץ לא נתמך. אפשר: PDF, Word (docx), תמונה, או טקסט.'));
 }
+
 
 /* ==== END files_client ==== */
 
@@ -2663,6 +2665,44 @@ function richPaginate(items){
   return { host: host, pages: pages };
 }
 
+/* ---------- רווח שנבלע בצילום (18/11/26) ----------
+   נמדד על התוצר, לא שוער: ב-PDF של האפליקציה מילים נדבקות —
+   "עיקרהדין" במקום "עיקר הדין", "הביתיוסף", "כלהסימן", "מילוןקצר".
+   הדפוס אחיד לגמרי: **הרווח האחרון בכל טקסט-נוד** נעלם. זה באג של
+   html2canvas ב-RTL (הוא מודד ומצייר מילה-מילה, והמיקום של הרווח
+   האחרון מחושב שגוי), והוא אינו קיים ב-DOM עצמו — הטקסט להעתקה
+   תקין. כלומר זה פגם של **התמונה** בלבד.
+
+   התיקון: רווח רגיל אינו נבלע כשהוא ` `. מחליפים **רק** את
+   האחרון בכל נוד ולא את כולם: רווח קשיח אינו נקודת שבירת שורה,
+   והחלפה גורפת הייתה מוציאה פסקאות ארוכות מחוץ לעמוד — כלומר
+   מתקנת פגם קוסמטי ויוצרת פגם חמור ממנו.
+
+   נעשה על עותק התצוגה (`pdfHolder`) שנמחק מיד אחרי הצילום, ולכן
+   אינו משפיע על מה שהמשתמש רואה במסך ולא על `richText`. */
+function rtlFixSpaces(root){
+  if(!root || !root.ownerDocument || !root.ownerDocument.createTreeWalker) return;
+  var w = root.ownerDocument.createTreeWalker(root, 4 /* SHOW_TEXT */, null, false);
+  var nodes = [], n;
+  while((n = w.nextNode())) nodes.push(n);
+  for(var i = 0; i < nodes.length; i++){
+    var t = nodes[i].nodeValue;
+    if(!t) continue;
+    /* נמדד: הבליעה היא של **רווח אחד** לכל נוד, והיא "נודדת" — אחרי
+       שהקשחתי את האחרון בלבד נבלע זה שלפניו ("האםמלוה" במקום
+       "האם מלוה"). לכן בנוד קצר, שאינו נשבר לשורות ממילא, מקשיחים
+       את כולם; בנוד ארוך רק את האחרון, כדי לא לשבור את העימוד. */
+    if(t.length <= 45){
+      nodes[i].nodeValue = t.replace(/ /g, ' ');
+      continue;
+    }
+    /* הרווח האחרון שיש אחריו תו שאינו רווח. רווח סופי (trailing)
+       אינו מצויר ממילא ואין טעם להקשיח אותו. */
+    var m = /^([\s\S]*) (\S+\s*)$/.exec(t);
+    if(m) nodes[i].nodeValue = m[1] + ' ' + m[2];
+  }
+}
+
 /* צילום העמודים ושמירה — אותו מסלול של `savePdf`, עם עמודים שהוכנו
    כבר. מספור בתחתית מעל שני עמודים, כמו שם. */
 function savePdfPages(name, P, btn, token){
@@ -2673,6 +2713,7 @@ function savePdfPages(name, P, btn, token){
     if(btn){ btn.textContent = old; btn.disabled = false; }
   }
   pdfNumber(P.pages);
+  rtlFixSpaces(P.host);
   var opts = pdfOpts(name), pdf = null, i = 0;
   function step(){
     if(token && token.off) return Promise.resolve(null);
@@ -3276,6 +3317,7 @@ function halRun(keys, material, extra, say, token){
       (chunks.length > 1 ? (' · ' + chunks.length + ' יחידות') : '') };
   });
 }
+
 
 
 /* ==== END sheet_client ==== */
