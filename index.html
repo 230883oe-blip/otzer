@@ -943,6 +943,374 @@ function fetchDaf(d, raw, say){
   });
 }
 
+/* ===================================================================
+   כל 6,610 הספרים שבספריא, לפי השם העברי   (21/11/26)
+   ===================================================================
+   עד כאן האפליקציה הכירה **שולחן ערוך, טור ובית יוסף בארבעה חלקים,
+   תשעה נושאי כלים, ו-45 מסכתות** - וזה הכול. `parseSiman` דורש גם
+   חלק וגם סימן, `parseDaf` דורש מסכת מהרשימה, ולכן כל שאר הספרייה
+   החזירה `null` מ-`sefariaSource`.
+
+   מה זה עשה בפועל, ולמה זה היה "דף ריק": כשאין חומר מספריא,
+   `body` נשאר **שורת הבקשה של המשתמש**. במצב סיכום הלכתי המודל קיבל
+   38 תווים במקום 64,000, החזיר JSON כמעט ריק, ו-`halDoc` עימד שער,
+   מפתח ריק ושורת סיום - מסמך בלי תוכן. במצב דף מקורות זה נפל לטקסט
+   חופשי מהמודל. שתי התקלות, שורש אחד.
+
+   המנגנון כאן הוא הפורט של `sheetlib/sefbooks.py` שעובד במחשב מאז
+   19/11. נמדד 21/11/26 מול ספריא החיה: הרשימה המקומית מזהה **21
+   מתוך 22**, ו-`/api/name` לבדו (בלי רשימה) רק **16 מתוך 21** -
+   ובמיוחד הוא מפספס את "חובות הלבבות", "תניא", "כף החיים", "שאגת
+   אריה" ו"בן איש חי". לכן יש רשימה, והיא לא מיותרת.
+   =================================================================== */
+
+var SEFB_URL = 'sef_titles.json';     /* אותו origin של המסך - בלי CORS */
+var SEFB_LS = 'sefBooks.v1';
+var SEFB = null;                      /* [{n: מנורמל, he: תקני, en: אנגלי}] */
+var SEFB_JOB = null;
+
+/* מילות מראה-מקום: **נמחקות** מהשאילתה. נמדד שספריא דוחה אותן בתוך
+   מראה מקום ("שאגת אריה החדשות סימן א" ✗ מול "...החדשות א" ✓). */
+var SEFB_REF_RX = new RegExp('^(?:סימן|סימנים|סי|סעיף|סעיפים|סע|פרק|פרקים|אות|' +
+  'אותיות|הלכה|הלכות|מצוו?[הת]|מצות|מצוות|פסוק|פסוקים|דף|עמוד|עמ|משנה|מסכת|' +
+  'תורה|מאמר|פיסקא|פסקה|ענף|כלל|דרוש|דרשה|תשובה|תשובות|ליקוט|שנה|סק)$');
+/* מילות חלק: **נשמרות** - הן חלק משם הצומת בספריא ("אור זרוע, חלק א"),
+   ובלעדיהן אין ref. שתי רשימות ולא אחת, וזה מה שנמדד. */
+var SEFB_PART_RX = /^(?:חלק|חלקים|כרך|שער|שערים|ספר)$/;
+var SEFB_PART_EN = { 'חלק':'Part', 'חלקים':'Part', 'כרך':'Volume', 'שער':'Gate',
+  'שערים':'Gate', 'ספר':'Book', 'מאמר':'Part', 'שנה':'Year' };
+var SEFB_ROMAN = ['','I','II','III','IV','V','VI','VII','VIII','IX','X'];
+
+/* שמות שהם מילים נפוצות בעברית. בין 6,610 השמות יש "תורה", "שמות",
+   "דברים", "אמת", "חיים" - שם של מילה אחת כזו אינו תופס לבד, אחרת כל
+   פסקה בעברית הייתה הופכת ל"מקור". */
+var SEFB_COMMON = (',תורה,משנה,שמות,דברים,אמת,חיים,הלכה,הלכות,ברכות,אור,דעת,' +
+  'מידות,מצוות,זהר,שבת,פתיחה,הקדמה,מבוא,סדר,ספר,שיר,אמונה,תפילה,תהלים,משלי,' +
+  'נשים,טהרות,מועד,קודשים,נזיקין,זרעים,אבות,ראיה,מאמר,דרשות,פירוש,ביאור,' +
+  'תוספות,יסוד,עבודה,תשובה,שאלות,').split(',');
+
+function sefbNorm(s){
+  s = String(s == null ? '' : s).replace(/["'׳״‘’“”′″`´]/g, '');
+  s = s.replace(/[‎‏‪-‮]/g, '').replace(/[־–—]/g, ' ');
+  return s.replace(/[,;:]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/* הרשימה: localStorage קודם, ואם אין - הורדה פעם אחת. 595KB גולמי
+   ו-~76KB בתעבורה (GitHub Pages מגיש gzip). נטען **עצלנית**, רק
+   כשמשתמש באמת ביקש מקור, ולכן אינו נוגע בטעינת המסך. */
+function sefbLoad(){
+  if(SEFB) return Promise.resolve(SEFB);
+  if(SEFB_JOB) return SEFB_JOB;
+  function build(arr){
+    var seen = {}, out = [], i;
+    for(i = 0; i < (arr || []).length; i++){
+      var he = arr[i][0], en = arr[i][1], n = sefbNorm(he);
+      if(!n || !en || seen[n]) continue;
+      seen[n] = 1;
+      out.push({ n: n, he: he, en: en });
+    }
+    /* ארוך קודם: "אור זרוע לצדיק" חייב לנצח את "אור זרוע". */
+    out.sort(function(a, b){ return b.n.length - a.n.length; });
+    SEFB = out;
+    return out;
+  }
+  try {
+    var cached = localStorage.getItem(SEFB_LS);
+    if(cached){
+      var arr = JSON.parse(cached);
+      if(arr && arr.length > 5000) return Promise.resolve(build(arr));
+    }
+  } catch(e){}
+  SEFB_JOB = withTimeout(fetch(SEFB_URL).then(function(r){
+    return r.ok ? r.json() : null;
+  }), 30000).then(function(arr){
+    if(!arr || !arr.length) { SEFB = []; return SEFB; }
+    /* רשימה חלקית לא נשמרת: היא תיראה תקינה ותפסול ספרים שקיימים. */
+    if(arr.length > 5000){
+      try { localStorage.setItem(SEFB_LS, JSON.stringify(arr)); } catch(e2){}
+    }
+    return build(arr);
+  }).catch(function(){ SEFB = []; return SEFB; });
+  return SEFB_JOB;
+}
+
+function sefbOkAlone(n){
+  if(n.indexOf(' ') >= 0) return true;
+  return n.length >= 3 && SEFB_COMMON.indexOf(n) < 0;
+}
+
+/* המשפט עם ה' הידיעה ובלעדיה. הספר "כוזרי" נקרא בספריא **"הכוזרי"**,
+   וזה דפוס נפוץ ("חינוך"/"החינוך", "טור"/"הטור") - שתי צורות, ולא
+   רשימת חריגים שתתיישן. */
+function sefbForms(n){
+  var sp = n.indexOf(' '), first = sp < 0 ? n : n.substring(0, sp);
+  var restP = sp < 0 ? '' : n.substring(sp);
+  if(first.charAt(0) === 'ה' && first.length > 2)
+    return [n, first.substring(1) + restP];
+  return [n, 'ה' + first + restP];
+}
+
+/* השם התקני הארוך ביותר שהמשפט פותח בו, והשארית. ההתאמה היא רישא
+   מדויקת **בגבול מילה** אחרי נרמול - "דברים נוספים" לא יתפוס את
+   הספר "דברים", ו"אור" לא ייתפס בתוך "אורח". אין fuzzy בכוונה:
+   התאמה מקורבת מחזירה מקור שגוי בביטחון מלא. */
+function sefbMatch(sentence){
+  if(!SEFB || !SEFB.length) return null;
+  var norm = sefbNorm(sentence);
+  if(!norm) return null;
+  var forms = sefbForms(norm), i, f;
+  for(i = 0; i < SEFB.length; i++){
+    var b = SEFB[i];
+    if(!sefbOkAlone(b.n)) continue;
+    for(f = 0; f < forms.length; f++){
+      var s = forms[f];
+      if(s === b.n || s.indexOf(b.n + ' ') === 0)
+        return { he: b.he, en: b.en, rest: s.substring(b.n.length).trim() };
+    }
+  }
+  return null;
+}
+
+/* מספר עברי. 'קצ״ה' -> 195, "ד'" -> 4, 'ט״ו' -> 15.
+
+   **הכלל שמונע את הבאג, והוא כל העניין:** אותיות של מספר יורדות
+   בערכן (חוץ מט״ו/ט״ז). בלעדיו "פרק" הוא מספר תקין לגמרי -
+   80+200+100 = 380 - וכך גם "שער" (570) ו"חלק" (138). נמדד כאן
+   21/11/26 בדפדפן: "חובות הלבבות שער א פרק ב" החזיר
+   `Duties of the Heart, First Treatise on Unity **380**:2`, כלומר
+   מראה מקום מומצא שנראה תקין לחלוטין. זה הפורט של `hebnum.to_int`,
+   שבו הכלל קיים - ולכן הבאג הזה אינו בקוד שבמחשב. */
+function sefbGim(w){
+  w = sefbNorm(w).replace(/[`’‘“”]/g, '');
+  if(!w) return 0;
+  var vals = [], i;
+  for(i = 0; i < w.length; i++){
+    if(!(w.charAt(i) in GIM)) return 0;
+    vals.push(GIM[w.charAt(i)]);
+  }
+  if(!/(?:טו|טז)$/.test(w))
+    for(i = 0; i < vals.length - 1; i++)
+      if(vals[i] < vals[i + 1]) return 0;
+  var n = 0;
+  for(i = 0; i < vals.length; i++) n += vals[i];
+  return n;
+}
+
+/* השאילתות, בסדר שנמדד כמצליח. **הפסיק ראשון** והוא מכריע: נמדד
+   ש"אור זרוע, חלק א ז" מחזיר את המקור ו"אור זרוע חלק א ז" לא. */
+function sefbQueries(hit){
+  var toks = hit.rest ? hit.rest.split(' ') : [], i;
+  var keep = [], bare = [];
+  for(i = 0; i < toks.length; i++){
+    var w = sefbNorm(toks[i]);
+    if(!w || SEFB_REF_RX.test(w)) continue;
+    keep.push(toks[i]);
+    if(!SEFB_PART_RX.test(w)) bare.push(toks[i]);
+  }
+  var out = [], vars = [keep.join(' '), bare.join(' '), hit.rest], v, q;
+  for(v = 0; v < vars.length; v++){
+    var val = (vars[v] || '').replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, '');
+    if(!val) continue;
+    var pair = [hit.he + ', ' + val, hit.he + ' ' + val];
+    for(q = 0; q < pair.length; q++)
+      if(out.indexOf(pair[q]) < 0) out.push(pair[q]);
+  }
+  /* נפילה לשם האנגלי של אותו ספר. ספריא מפענחת מראה מקום באנגלית טוב
+     בהרבה, והשם האנגלי כבר בידינו מאותה רשימה - כלומר בלי שום ניחוש.
+     **שומר הסף:** רק כשכל מילה בשארית היא מספר, מילת מראה-מקום או
+     מילת חלק שאנחנו יודעים לתרגם. מילה שאיננו מכירים היא שם של חלק,
+     והשמטתה מחזירה מקור מהספר הנכון ומהמקום הלא נכון - מחיקה שקטה. */
+  if(hit.en){
+    var nums = [], part = null, good = true;
+    for(i = 0; i < toks.length; i++){
+      var t = sefbNorm(toks[i]);
+      if(!t) continue;
+      if(/^\d+$/.test(t)){ nums.push(parseInt(t, 10)); continue; }
+      var g = sefbGim(t);
+      if(g){ nums.push(g); continue; }
+      if(SEFB_PART_RX.test(t)){ part = part || SEFB_PART_EN[t]; continue; }
+      if(SEFB_REF_RX.test(t)) continue;
+      good = false;
+    }
+    if(good && nums.length){
+      var j = nums.join(' ');
+      if(part){
+        out.push(hit.en + ', ' + part + ' ' + j);
+        if(nums[0] < SEFB_ROMAN.length){
+          var tail = nums.slice(1).join(' ');
+          out.push(hit.en + ', ' + part + ' ' + SEFB_ROMAN[nums[0]] + (tail ? ' ' + tail : ''));
+        }
+      }
+      out.push(hit.en + ' ' + nums.join(':'));
+      out.push(hit.en + ' ' + j);
+    }
+  }
+  if(!out.length) out.push(hit.he);
+  return out;
+}
+
+function sefbName(q, lim){
+  var url = 'https://www.sefaria.org/api/name/' + encodeURIComponent(q) +
+            '?limit=' + (lim == null ? 0 : lim);
+  return withTimeout(fetch(url).then(function(r){
+    return r.ok ? r.json() : null;
+  }), 20000).catch(function(){ return null; });
+}
+
+/* ספר שבנוי משערים **בשם** ולא ממוספרים.   (21/11/26)
+
+   נמדד: "חובות הלבבות שער א פרק ב" ו"תניא פרק א" נכשלו בכל הצורות -
+   לא מפני שהספרים חסרים (`/api/name/תניא` מחזיר `is_ref=True`) אלא
+   מפני שבספריא אין בהם "שער 1": יש **"חובות הלבבות, שער ראשון - שער
+   ייחוד"** ו-**"תניא, חלק ראשון; ליקוטי אמרים"**.
+
+   וזה **לא ניחוש**: ספריא כותבת את המספר הסידורי בשם הצומת עצמו
+   ("ראשון", "רביעי"), ולכן "שער ד" מתורגם ל"רביעי" ונמצא מילולית.
+   שתי הצורות נוסות, כי נמדד שהן משתנות לפי הספר: בתניא עובד השם
+   העברי עם פסיק, ובחובות הלבבות - שבשמו יש מקף - רק השם האנגלי. */
+var SEFB_ORD = ['', 'ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי',
+                'שביעי', 'שמיני', 'תשיעי', 'עשירי'];
+
+function sefbNodeRef(hit){
+  var toks = hit.rest ? hit.rest.split(' ') : [], i = 0;
+  var pword = null, pnum = 0, others = [];
+  while(i < toks.length){
+    var w = sefbNorm(toks[i]);
+    if(SEFB_PART_RX.test(w) && i + 1 < toks.length){
+      var n0 = sefbGim(toks[i + 1]);
+      if(n0){ pword = w; pnum = n0; i += 2; continue; }
+    }
+    var n = /^\d+$/.test(w) ? parseInt(w, 10) : sefbGim(w);
+    if(n) others.push(n);
+    i++;
+  }
+  if(!pword || !pnum || pnum >= SEFB_ORD.length) return Promise.resolve(null);
+  var word = SEFB_ORD[pnum];
+  return sefbName(hit.he + ', ', 40).then(function(d){
+    if(!d) return null;
+    var objs = d.completion_objects || [], cands = [], k;
+    for(k = 0; k < objs.length; k++){
+      var t = String(objs[k].title || '');
+      if(t.indexOf(hit.he) !== 0 || t.indexOf(word) < 0) continue;
+      cands.push({ he: t, en: objs[k].key || '', exact: t.indexOf(pword) >= 0 });
+    }
+    /* צומת שבו גם מילת החלק וגם המספר המילולי קודם: "שער ראשון"
+       מדויק יותר מ-"חלק ראשון" כששאלו על שער. */
+    cands.sort(function(a, b){
+      return (b.exact - a.exact) || (a.he.length - b.he.length);
+    });
+    if(!cands.length) return null;
+    var node = cands[0];
+    var tail = others.join(' ');
+    var qs = [];
+    if(tail){
+      qs.push(node.he + ', ' + tail);
+      if(node.en) qs.push(node.en + ' ' + others.join(':'), node.en + ' ' + tail);
+    } else {
+      qs.push(node.he);
+      if(node.en) qs.push(node.en);
+    }
+    return qs.reduce(function(chain, q){
+      return chain.then(function(found){
+        if(found) return found;
+        return sefbName(q, 0).then(function(r){
+          return (r && r.is_ref && r.ref && /\d/.test(r.ref))
+            ? { ref: r.ref, he: node.he, q: q } : null;
+        });
+      });
+    }, Promise.resolve(null));
+  });
+}
+
+/* ה-ref בספריא לשורה שהמשתמש כתב, או null. אין כאן ניחוש: כל
+   שאילתה נבדקת מול `/api/name`, ורק `is_ref` עם מספר נחשב. */
+function sefbRef(sentence){
+  return sefbLoad().then(function(){
+    var hit = sefbMatch(sentence);
+    if(!hit) return null;
+    var qs = sefbQueries(hit);
+    return qs.reduce(function(chain, q){
+      return chain.then(function(found){
+        if(found) return found;
+        return sefbName(q, 0).then(function(d){
+          if(d && d.is_ref && d.ref && /\d/.test(d.ref))
+            return { ref: d.ref, he: hit.he, q: q };
+          return null;
+        });
+      });
+    }, Promise.resolve(null)).then(function(found){
+      /* ספר שבנוי משערים בשם - הנפילה האחרונה, ורק אחרי שהדרך
+         הישירה נכשלה: היא עולה בקשה נוספת. */
+      return found || sefbNodeRef(hit);
+    }).then(function(found){
+      /* ספר שקיים בספריא ומראה מקום שלא פוענח אינו "לא נמצא": זה
+         מידע שהמשתמש צריך, ולכן הוא חוזר ולא נבלע. */
+      return found || { ref: null, he: hit.he,
+                        why: '"' + hit.he + '" קיים בספריא, אבל לא פענחתי את מראה המקום' };
+    });
+  });
+}
+
+/* שורות הבקשה. "החינוך מצווה של״ז" בשורה אחת ו"מסילת ישרים פרק א"
+   בשנייה הן שני מקורות, וזה הדפוס הרגיל של דף מקורות. */
+function sefbLines(raw){
+  var parts = String(raw || '').split(/[\n\r]+|\s+·\s+|\s*;\s*/), out = [], i;
+  for(i = 0; i < parts.length; i++){
+    var s = parts[i].replace(/^[\s•\-–—*\d.)\]]+/, '').trim();
+    if(s.length >= 3 && /[א-ת]/.test(s)) out.push(s);
+  }
+  return out;
+}
+
+/* הבאת כל הספרים שזוהו בשורות, עם הלשון עצמה. מחזיר את אותו מבנה
+   של `fetchSiman`/`fetchDaf` - טקסט למודל **וגם** blocks לעימוד דף
+   המקורות, כדי ששני הכפתורים ייהנו מאותו זיהוי. */
+function fetchBooks(raw, say){
+  var lines = sefbLines(raw);
+  if(!lines.length || lines.length > 40) return Promise.resolve(null);
+  return sefbLoad().then(function(books){
+    if(!books || !books.length) return null;
+    /* קודם מזהים הכול, ורק אחר כך מביאים: שורה שאינה מקור אינה
+       אמורה לעלות בקשת רשת. */
+    var cand = [], i;
+    for(i = 0; i < lines.length; i++)
+      if(sefbMatch(lines[i])) cand.push(lines[i]);
+    if(!cand.length) return null;
+    if(say) say('מזהה מקורות בספריא…');
+    return cand.reduce(function(chain, line){
+      return chain.then(function(acc){
+        return sefbRef(line).then(function(r){
+          if(!r) return acc;
+          if(!r.ref){ acc.missing.push(line + ' (' + r.why + ')'); return acc; }
+          if(say) say('מביא מספריא: ' + r.ref + '…');
+          return sefText(r.ref).then(function(segs){
+            if(!segs || !segs.length){
+              acc.missing.push(line + ' (לא הוחזר טקסט מספריא)');
+              return acc;
+            }
+            acc.names.push(line);
+            acc.out.push('', '######## ' + line + '  [' + r.ref + '] ########');
+            acc.out = acc.out.concat(segs);
+            acc.blocks.push({ kind: 'source', label: line, paras: segs,
+                              kicker: 'מקור', scope: segs.length + ' קטעים' });
+            return acc;
+          }).catch(function(){ acc.missing.push(line); return acc; });
+        });
+      });
+    }, Promise.resolve({ out: [], blocks: [], names: [], missing: [] })).then(function(acc){
+      if(!acc.blocks.length) return null;
+      var ttl = acc.names.length === 1 ? acc.names[0] : acc.names.length + ' מקורות';
+      return { text: sefCap(acc.out.join('\n')),
+               note: 'מקור מלא מספריא · ' + acc.names.join(' · '),
+               missing: acc.missing,
+               sheet: { title: ttl, subtitle: 'מספריא',
+                        scope: 'הלשון כפי שהיא, בלי ניסוח מחדש.',
+                        name: 'דף מקורות - ' + ttl,
+                        blocks: acc.blocks } };
+    });
+  });
+}
+
 /* קישור לספריא: הופך את ה-URL למראה מקום ומביא דרך הממשק, לא דרך
    שער קריאה. דף של ספריא בנוי ב-JavaScript, ולכן שער קריאה מחזיר
    ממנו תפריטים ולא את הלשון. */
@@ -977,7 +1345,10 @@ function sefariaSource(raw, say){
   if(p) return fetchSiman(p, raw, say);
   var d = parseDaf(raw);
   if(d) return fetchDaf(d, raw, say);
-  return Promise.resolve(null);
+  /* 21/11/26 — כל שאר הספרייה. שו"ע ומסכתות נבדקים **קודם** בכוונה:
+     להם יש כאן מסלול שמביא גם את הטור, הבית יוסף ונושאי הכלים יחד,
+     וזיהוי כללי היה מחזיר את השולחן ערוך לבדו - פחות חומר, בשקט. */
+  return fetchBooks(raw, say);
 }
 
 
@@ -1920,6 +2291,7 @@ var LUZ_CSS =
 '.luzgti small{display:block;font-size:12.5px;color:#5c7472;margin-top:1px}' +
 '.luzgrem{margin-top:18px;border:2px dashed #0f766e;border-radius:12px;padding:11px 14px;' +
  'font-size:16px;font-weight:600;text-align:center;color:#0f766e}';
+
 /* ==== END luz_client ==== */
 /* ציור לוח הזמנים: שלוש תבניות, מעבר ביניהן בלחיצה, והורדת PDF של
    מה שרואים. העיצוב מוזרק פעם אחת לתג ששמור לו ב-<head>. */
@@ -3269,6 +3641,48 @@ function halDoc(meta, units){
   return items;
 }
 
+/* ===================================================================
+   שומר הסף של הסיכום ההלכתי   (21/11/26)
+   ===================================================================
+   התלונה: "סיכום הלכתי מוציא דף ריק". השורש היה בהבאת החומר (ספר
+   שאינו שו"ע/גמרא לא זוהה, ולכן `body` נשאר שורת הבקשה), אבל צריך
+   **גם** את השומר הזה - ולא רק מפני שעוד מקרה יימצא: `halDoc` מעמד
+   שער, מפתח ושורת סיום **תמיד**, גם כששום יחידה אין בה תוכן. כלומר
+   כשל בהבאת החומר מתורגם למסמך שנראה תקין ואין בו דבר.
+
+   מסמך ריק גרוע מהודעת שגיאה: המשתמש לא יודע שמשהו נשבר, והוא גם
+   לא יודע מה לעשות אחרת.
+   =================================================================== */
+
+/* התוכן האמיתי ביחידות, בתווים - בלי כותרות, תוויות ועיצוב. */
+function halBodyLen(units){
+  var n = 0, i, p, b, r;
+  function add(s){
+    s = String(s == null ? '' : s).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    n += s.length;
+  }
+  for(i = 0; i < (units || []).length; i++){
+    var u = units[i] || {};
+    add(halConcl(u.conclusion));
+    for(p = 0; p < (u.parts || []).length; p++){
+      var part = u.parts[p] || {};
+      for(b = 0; b < (part.blocks || []).length; b++){
+        var blk = part.blocks[b] || {};
+        add(blk.html);
+        for(r = 0; r < (blk.rows || []).length; r++){
+          add((blk.rows[r] || {}).html);
+          var who = (blk.rows[r] || {}).who || [];
+          for(var w = 0; w < who.length; w++) add((who[w] || {}).html);
+        }
+        for(var s2 = 0; s2 < (blk.steps || []).length; s2++) add((blk.steps[s2] || {}).html);
+      }
+    }
+  }
+  return n;
+}
+
+var HAL_MIN_BODY = 400;      /* פחות מזה אינו סיכום בהרחבה בשום פירוש */
+
 /* הרצת הסיכום: יחידה לכל חלק של החומר, פנייה אחת לכל יחידה.
    ברצף ולא במקביל — פניות מקבילות לאותו מפתח מחזירות 429, וזה
    מה שנמדד כאן ב-`askPaged`. */
@@ -3313,6 +3727,19 @@ function halRun(keys, material, extra, say, token){
   }, Promise.resolve()).then(function(){
     if(!units.length) return null;
     if(!meta) meta = {};
+    /* ההגנה: מסמך בלי תוכן לא יופק. ההודעה אומרת מה לעשות אחרת,
+       כי "נסה שוב" על חומר שלא הובא יחזיר בדיוק את אותו כלום. */
+    var len = halBodyLen(units);
+    if(len < HAL_MIN_BODY){
+      var hint = material && material.length < 400
+        ? 'שלחתי למנוע רק ' + material.length + ' תווים — כלומר לא הצלחתי ' +
+          'להביא את לשון המקור. כתוב את המקור כמו בדף מקורות, למשל: ' +
+          '"טור ושו״ע יורה דעה סימן ק״צ עם ש״ך וט״ז", "ספר החינוך מצווה של״ז", ' +
+          '"בבא מציעא כט ע״ב", או הדבק את החומר עצמו.'
+        : 'המנוע החזיר סיכום ריק (' + len + ' תווים של תוכן). נסה שוב, ' +
+          'או שלח פחות חומר בבת אחת.';
+      throw new Error(hint);
+    }
     return { meta: meta, units: units, via: via +
       (chunks.length > 1 ? (' · ' + chunks.length + ' יחידות') : '') };
   });
@@ -3608,6 +4035,15 @@ $('go').onclick = function(){
        מה שמחייב מקור אחר מקור ומסקנה בסוף — טקסט חופשי אינו מחייב
        כלום, וזה ההבדל שנראה בתוצר. */
     if(ticket.mode === 'halacha'){
+      /* 21/11/26 — "סיכום הלכתי מוציא דף ריק": כשלא זוהה מקור,
+         `body` נשאר **שורת הבקשה** (עשרות תווים), המודל החזיר יחידה
+         כמעט ריקה, ו-`halDoc` עימד שער ושורת סיום - מסמך בלי תוכן.
+         נאמר כאן, לפני שנשרפת פנייה למנוע על כלום. */
+      if(!srcNote && body.replace(/\s+/g, ' ').trim().length < 400)
+        throw new Error('לא הצלחתי להביא חומר לסיכום — מה ששלחת הוא שורת ' +
+          'בקשה ולא חומר. כתוב מראה מקום שאביא מספריא ("טור ושו״ע יורה דעה ' +
+          'סימן ק״צ עם ש״ך וט״ז" · "ספר החינוך מצווה של״ז" · "בבא מציעא כט ' +
+          'ע״ב"), או הדבק את החומר עצמו.');
       return halRun(tkeys(ticket), body, extra, say, token).then(function(h){
         if(!h) return null;
         return { richKind: 'halacha', meta: h.meta, units: h.units,
