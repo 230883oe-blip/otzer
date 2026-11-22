@@ -1493,6 +1493,36 @@ function pdfPara(text){
 
 var PDF_NUM_RX = /^\s*(?:[-•*]|\d+[.)]|\(\d+\)|[א-ת][.)]|[א-ת]['׳][.)]?)\s+/;
 
+/* ===================================================================
+   מחיצת עמוד: "===== עמוד 2: דף מקורות לתלמיד ====="   (22/11/26)
+   ===================================================================
+   התלונה: "דף שאלות ותשובות לא מופיעים כדפים נפרדים, רחוק מאד
+   מכפתור מערך שיעור בבוט הטקסטים".
+
+   נמדד על פלט אמיתי של מערך שיעור (687 מילים, ארבעה חלקים): יצאו
+   **שני** עמודי PDF, כלומר דף המקורות התחיל באמצע עמוד 1 ודף
+   התשובות באמצע עמוד 2. ולא רק זה - שורת המחיצה עצמה הודפסה כפי
+   שהיא, סימני שווה וכל, בתוך גוף המסמך.
+
+   השורש: `askPaged` (16/11) הוסיף את המחיצה כדי שהמודל יכתוב עמוד
+   בכל פנייה, ו-`pdfBlocks`/`pdfPaginate` מעולם לא למדו עליה - הן
+   ממלאות עמודים ברצף לפי גובה בלבד. חצי מהיכולת נבנתה.
+   בבוט הטקסטים `lesson.py` מייצר `div.page` ו-`render_pdf.py` סופר
+   אותם (`count_pages`), ולכן שם זה מעולם לא קרה. */
+var PDF_BRK_RX = /^\s*={3,}\s*עמוד\s*\d+\s*:?\s*(.*?)\s*={3,}\s*$/;
+
+/* כותרת החלק - מחליפה את שורת המחיצה. שמו של החלק נשאר, סימני
+   השווה והמספר יורדים: המספר כבר נגזר מסדר העמודים. */
+function pdfPartHead(name){
+  var d = document.createElement('div');
+  d.style.cssText = 'font-size:' + Math.round(PG_H1 * 0.82) + 'px;font-weight:bold;' +
+    'line-height:1.25;margin:0 0 13px;padding-bottom:6px;' +
+    'border-bottom:2px solid #5a2d0c;color:#5a2d0c';
+  d.textContent = String(name || '').trim();
+  d.setAttribute('data-brk', 'page');
+  return d;
+}
+
 /* שורה שהיא כותרת פסקה - אותו כלל דטרמיניסטי של printpdf.py:
    קצרה, בלי סוף משפט, ויש לפניה שורה ריקה. */
 function pdfIsHeading(s, prevBlank){
@@ -1526,6 +1556,8 @@ function pdfBlocks(body){
   for(i = 0; i < raw.length; i++){
     var s = raw[i].trim();
     if(!s){ out.push(pdfPara('')); prevBlank = true; continue; }
+    var brk = s.match(PDF_BRK_RX);
+    if(brk){ out.push(pdfPartHead(brk[1])); prevBlank = true; continue; }
     if(pdfIsHeading(s, prevBlank)) out.push(pdfHeading(s));
     else if(PDF_NUM_RX.test(s)) out.push(pdfBullet(s.replace(PDF_NUM_RX, '')) );
     else out.push(pdfPara(s));
@@ -1569,6 +1601,9 @@ function pdfPaginate(title, body){
     var put = 0;
     while(bi < blocks.length){
       var b = blocks[bi];
+      /* כותרת חלק פותחת עמוד חדש - אלא אם העמוד הנוכחי עוד ריק,
+         אחרת כל מערך שיעור היה נפתח בעמוד לבן. */
+      if(b.getAttribute && b.getAttribute('data-brk') === 'page' && put > 0) break;
       pg.appendChild(b);
       if(pg.scrollHeight > pg.clientHeight + 1){
         pg.removeChild(b);
@@ -1598,6 +1633,29 @@ function pdfNumber(pages){
   }
 }
 
+/* ===================================================================
+   22/11/26 — מה שנוסה כאן ל"אותיות דבוקות", ונפסל במדידה
+   ===================================================================
+   הפגם: בציור הידני של html2canvas סימן פיסוק נייטרלי בטקסט
+   מימין-לשמאל מקבל כיוון שגוי, והרווח שבגבול נבלע. נמדד על מערך
+   שיעור אמיתי: "לפני השיעור: להכין" יצא "לפני :השיעור להכין".
+
+   שני מסלולי תיקון נוסו, שניהם נמדדו, ושניהם הוחזרו:
+   1. `foreignObjectRendering: true` דרך `html2pdf().from(pg)` —
+      **תיקן את הטקסט במלואו**, אבל העמוד יצא מוסט ותחילת כל שורה
+      עברית נחתכה מחוץ לדף (המעטפת של html2pdf ממורכזת). שלושה
+      נסיונות לבטל את ההסטה מבחוץ — `windowWidth`, `direction:ltr`
+      על המיכל, ומיכל ברוחב מלא במקום אפס — החזירו קובץ **זהה
+      בתים**, כלומר אין לה ידית מכאן.
+   2. צילום ישיר ב-`window.html2canvas` בלי המעטפת — החבילה
+      `html2pdf.bundle` **אינה חושפת** את `html2canvas` ואת `jspdf`
+      (נמדד בדף החי: שניהם `undefined`). טעינה שלהם מ-CDN נפרד
+      הצליחה, והתוצאה הייתה **שני עמודים שחורים לגמרי** (דיו 100%).
+
+   לכן הציור הידני נשאר, ועמו `rtlFixSpaces` — התיקון שכבר הוכח
+   בייצור במסלול השני. תיקון שמוציא מלל מחוץ לדף או מייצר עמוד
+   שחור גרוע מהפגם שהוא בא לתקן.
+   =================================================================== */
 function savePdf(title, body, btn){
   var old = btn ? btn.textContent : '';
   if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
@@ -1612,6 +1670,14 @@ function savePdf(title, body, btn){
   return loadScript(CDN.html2pdf).then(function(){
     var P = pdfPaginate(ttl, body);
     pdfNumber(P.pages);
+    /* 22/11/26 — `rtlFixSpaces` נכתב ב-18/11 לתיקון "עיקרהדין" במקום
+       "עיקר הדין", וחובר **רק** ל-`savePdfPages` (דף מקורות וסיכום
+       הלכתי). מצב הטקסט - ובתוכו מערך השיעור - נשאר בלי התיקון, ולכן
+       התלונה "אותיות דבוקות" חזרה בדיוק שם. נמדד על מערך שיעור אמיתי:
+       "אבידה ומציאה" יצא "אבידהומציאה". אותה משפחה של "כשמתקנים גשר,
+       לבדוק את כל חמשת הגשרים". */
+    rtlFixSpaces(P.host);
+    bidiDrawOn();
     var opts = pdfOpts(name), pdf = null, i = 0;
 
     function step(){
@@ -1668,9 +1734,26 @@ var _pdfHold = null;
 function pdfHolder(page){
   pdfCleanup();
   var hold = document.createElement('div');
-  hold.style.cssText = 'position:absolute;top:0;left:0;z-index:-1;opacity:0;' +
-                       'pointer-events:none;width:0;height:0;overflow:hidden;' +
-                       'background:#fff';
+  /* 22/11/26 — `direction:ltr` על המיכל, והוא **חובה** במצב
+     `foreignObjectRendering`. המסמך כולו `dir="rtl"`, ולכן בשכפול
+     שנכנס ל-SVG העמוד נדחק לקצה ימין של רוחב החלון במקום לשבת ב-0.
+     נמדד: פס שחור של 34 פיקסלים בשמאל הדף, ובדיוק אותה מידה נחתכה
+     מימין - תחילת כל שורה עברית. ההפרש שווה בדיוק ל-
+     `window.innerWidth - 793`, כלומר להצמדה לימין ולא לגלילה.
+     זה אינו נוגע בכיוון הטקסט: `direction:rtl` יושב על העמוד עצמו
+     (`pdfPageEl`) ונשאר כפי שהוא. */
+  /* 22/11/26 — המיכל היה ברוחב **אפס** עם `overflow:hidden`, וההערה
+     למטה קבעה שזה אינו פוגע בצילום. זה היה נכון בציור הידני, שבו
+     html2canvas משכפל את האלמנט למסמך נפרד - ולא במצב
+     `foreignObjectRendering`, שבו ה-DOM עצמו נכנס ל-SVG **עם החיתוך
+     של ההורה**. נמדד: פס כהה של 34 פיקסלים בשמאל הדף, ובדיוק אותה
+     מידה חסרה מימין, כלומר תחילת כל שורה עברית. `position:fixed`
+     נותן למיכל את מידות העמוד בלי להשפיע על גלילת המסמך כלל (הוא
+     מחוץ לזרימה), ולכן גם החשש המקורי מגלילה אופקית בטלפון אינו חל. */
+  hold.style.cssText = 'position:fixed;top:0;left:0;z-index:-1;opacity:0;' +
+                       'pointer-events:none;width:' + A4_W + 'px;height:' + A4_H + 'px;' +
+                       'background:#fff;direction:ltr';
+  hold.setAttribute('dir', 'ltr');
   if(page) hold.appendChild(page);
   _pdfHold = hold;
   return hold;
@@ -1678,6 +1761,10 @@ function pdfHolder(page){
 function pdfCleanup(){
   if(_pdfHold && _pdfHold.parentNode) _pdfHold.parentNode.removeChild(_pdfHold);
   _pdfHold = null;
+  /* 22/11/26 — כאן, ולא ב-`done` של כל מסלול בנפרד: `pdfCleanup` רץ
+     בכל סיום **וגם בכישלון**, וזו הנקודה היחידה שאין ממנה דרך לצאת
+     בלי להסיר את העטיפה. ראה `bidiDrawOn`. */
+  bidiDrawOff();
 }
 function pdfOpts(name){
   return {
@@ -1693,6 +1780,14 @@ function pdfOpts(name){
        נלקח לפי המלבן הישן, והתוצאה: הכול מוסט ימינה ותחילת כל שורה
        עברית נחתכת מחוץ לדף. בלי הכפייה הזו השכפול והמקור זהים,
        והצילום יושב בדיוק על העמוד.                               */
+    /* 22/11/26 — `foreignObjectRendering` נוסה כאן ונפסל, וזה שווה
+       לזכור: הוא **תיקן** את הבידי במלואו (הטקסט יצא מושלם), אבל
+       העמוד יצא מוסט ימינה ותחילת כל שורה עברית נחתכה מחוץ לדף -
+       בדיוק התקלה של 16/11. במצב הזה ה-DOM נכנס ל-SVG עם המעטפת
+       של html2pdf, שממורכזת, ואין דרך לבטל את ההסטה מכאן (נמדד:
+       `windowWidth`, `direction:ltr` ומיכל ברוחב מלא - שלושתם
+       החזירו קובץ **זהה בתים**). תיקון בידי שמוציא מלל מחוץ לדף
+       גרוע מהפגם שהוא מתקן. */
     html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff',
                    scrollX: 0, scrollY: 0, logging: false },
     jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
@@ -2615,6 +2710,7 @@ function pdfBlank(land){
    פיקסל-שניים בגובה. המשתמש מקבל דף לבן מיותר בכל הדפסה. ההורדה
    עוברת עכשיו דרך אובייקט ה-PDF, והעודף נמחק. */
 function pdfSaveOne(el, name){
+  bidiDrawOn();                     /* 22/11/26 - גם הלוח הוא עברית */
   return window.html2pdf().set(pdfOpts(name)).from(el).toPdf().get('pdf')
     .then(function(pdf){
       var n = pdf.internal.getNumberOfPages();
@@ -3037,42 +3133,219 @@ function richPaginate(items){
   return { host: host, pages: pages };
 }
 
-/* ---------- רווח שנבלע בצילום (18/11/26) ----------
-   נמדד על התוצר, לא שוער: ב-PDF של האפליקציה מילים נדבקות —
-   "עיקרהדין" במקום "עיקר הדין", "הביתיוסף", "כלהסימן", "מילוןקצר".
-   הדפוס אחיד לגמרי: **הרווח האחרון בכל טקסט-נוד** נעלם. זה באג של
-   html2canvas ב-RTL (הוא מודד ומצייר מילה-מילה, והמיקום של הרווח
-   האחרון מחושב שגוי), והוא אינו קיים ב-DOM עצמו — הטקסט להעתקה
-   תקין. כלומר זה פגם של **התמונה** בלבד.
+/* ---------- רווח שנבלע בצילום (18/11/26, נפתר בשורש 22/11/26) ----------
+   התסמין: ב-PDF מילים נדבקות — "עיקרהדין", "של מישאיבד", "ידעמוקדם".
+   18/11 זה אובחן כ"הרווח האחרון בכל טקסט-נוד" והוקשח ל-` `. זה
+   טיפל בתסמין, ולכן הבליעה "נדדה" לרווח שלפניו וחזרה בכל פסקה.
 
-   התיקון: רווח רגיל אינו נבלע כשהוא ` `. מחליפים **רק** את
-   האחרון בכל נוד ולא את כולם: רווח קשיח אינו נקודת שבירת שורה,
-   והחלפה גורפת הייתה מוציאה פסקאות ארוכות מחוץ לעמוד — כלומר
-   מתקנת פגם קוסמטי ויוצרת פגם חמור ממנו.
+   22/11/26 — הוקלטה כל קריאת `fillText` של הצילום (`bidi_trace.py`),
+   והסיבה נמדדה ואינה משוערת. html2canvas מפצל טקסט בנקודות שבירת
+   שורה (UAX#14), ולכן כל קטע שהוא מצייר הוא **מילה יחד עם הרווח
+   שאחריה** ("מי "). את המיקום הוא לוקח ממלבן אמיתי ב-DOM - ושם
+   רווח שנפל בסוף שורה **נבלע בעימוד**, כלומר המלבן מכיל רק את
+   המילה בזמן שהמחרוזת המצוירת מכילה גם רווח. ההפרש נדחף למילה,
+   והיא נדבקת לשכנתה. זה קורה **פעם אחת בכל שורה**, בדיוק כפי
+   שנראה בפלט (נמדד: חפיפה של 4.08 פיקסלים במילה השמאלית בשורה,
+   ו-1.6 פיקסלים של מרווח תקין בכל השאר).
+
+   מה שנוסה ונפסל במדידה, ושווה לזכור:
+   · רווח קשיח לכל הרווחים - מבטל שבירת שורות ויישור לשני הצדדים.
+   · רווח ברוחב אפס **לפני** הרווח - חוק LB8 מצרף `ZW SP*` ליחידה
+     אחת ושובר רק אחריה, ולכן הקטע עדיין יצא "מילה+רווח". נמדד.
+
+   התיקון: לשאול את הפריסה עצמה אילו רווחים נבלעו - רווח שמלבנו
+   ריק, או ששכניו יושבים בשתי שורות שונות - ולהחליף **רק אותם**
+   ברווח ברוחב אפס. הוא שומר על נקודת השבירה ואינו מוסיף רוחב
+   (הרווח הנבלע ממילא לא תפס רוחב), ולכן העימוד זהה לחלוטין -
+   ושאר הרווחים, כולל היישור לשני הצדדים, אינם נוגעים בכלל.
 
    נעשה על עותק התצוגה (`pdfHolder`) שנמחק מיד אחרי הצילום, ולכן
    אינו משפיע על מה שהמשתמש רואה במסך ולא על `richText`. */
-function rtlFixSpaces(root){
-  if(!root || !root.ownerDocument || !root.ownerDocument.createTreeWalker) return;
-  var w = root.ownerDocument.createTreeWalker(root, 4 /* SHOW_TEXT */, null, false);
+function _chTop(rg, node, k){
+  try{
+    rg.setStart(node, k); rg.setEnd(node, k + 1);
+    var r = rg.getBoundingClientRect();
+    if(!r || (r.width === 0 && r.height === 0)) return null;
+    return r.top;
+  }catch(e){ return null; }
+}
+function _chWide(rg, node, k){
+  try{
+    rg.setStart(node, k); rg.setEnd(node, k + 1);
+    var r = rg.getBoundingClientRect();
+    return !!r && r.width > 0.5;
+  }catch(e){ return true; }        /* בספק - לא נוגעים */
+}
+/* ---------- טווח מספרים שמתפצל בציור (22/11/26) ----------
+   נמדד בפלט: "0-10 דקות" יצא "001", ו-"10-30" יצא "0-03".
+
+   מה שנמדד בהקלטת הציור, ולא שוער: html2canvas חתך את "0-10 " לשלושה
+   קטעים, והקטע האחרון היה "0 " - הספרה האחרונה **יחד עם הרווח
+   שאחריה**. הקטע הזה חוצה גבול כיוון: הספרה שייכת לרצף שמאל-לימין
+   והרווח לטקסט העברי שסביבו. `Range.getClientRects` מחזיר במקרה כזה
+   **שני** מלבנים נפרדים, ו-html2canvas לוקח את הראשון - כלומר את
+   המלבן של הרווח. הספרה נוחתת 25 פיקסלים משם, על גבי שכנתה.
+
+   שני תיקונים נוסו ונפסלו במדידה:
+   · `\u2060` (מחבר מילים) - css-line-break של html2canvas אינו מכיר
+     אותו, והפיצול יצא גרוע יותר: "0-1" ו-"0" עם חפיפה של 8 פיקסלים.
+   · `\u200E` (סימן שמאל-לימין) סביב המפריד - תיקן את סדר התווים בתוך
+     הקטע, אבל לא את המלבן: הקטע עדיין חצה את גבול הכיוון.
+
+   התיקון: הטווח נעטף ביחידה משלו (`<span dir="ltr">`). ליחידה נפרדת
+   יש קטעי ציור משלה, ולכן אף קטע אינו חוצה יותר את הגבול - הרווח
+   נשאר בטקסט העברי והמספר נמדד לבדו. `span` שורה בלי עיצוב אינו
+   משנה את הפריסה כלל (נמדד: מיקומי כל שאר המילים זהים). */
+function rtlJoinNumbers(root){
+  if(!root || !root.ownerDocument) return;
+  var doc = root.ownerDocument;
+  if(!doc.createTreeWalker || !doc.createDocumentFragment) return;
+  var w = doc.createTreeWalker(root, 4 /* SHOW_TEXT */, null, false);
   var nodes = [], n;
   while((n = w.nextNode())) nodes.push(n);
+  var RX = /[0-9]+(?:[\-\u2013\u2014\/:][0-9]+)+/g;
   for(var i = 0; i < nodes.length; i++){
     var t = nodes[i].nodeValue;
-    if(!t) continue;
-    /* נמדד: הבליעה היא של **רווח אחד** לכל נוד, והיא "נודדת" — אחרי
-       שהקשחתי את האחרון בלבד נבלע זה שלפניו ("האםמלוה" במקום
-       "האם מלוה"). לכן בנוד קצר, שאינו נשבר לשורות ממילא, מקשיחים
-       את כולם; בנוד ארוך רק את האחרון, כדי לא לשבור את העימוד. */
-    if(t.length <= 45){
-      nodes[i].nodeValue = t.replace(/ /g, ' ');
-      continue;
+    if(!t || !/[0-9]/.test(t)) continue;
+    RX.lastIndex = 0;
+    if(!RX.test(t)) continue;
+    RX.lastIndex = 0;
+    var frag = doc.createDocumentFragment(), last = 0, m;
+    while((m = RX.exec(t))){
+      if(m.index > last) frag.appendChild(doc.createTextNode(t.substring(last, m.index)));
+      var sp = doc.createElement('span');
+      sp.setAttribute('dir', 'ltr');
+      /* ועוד `\u200E` (סימן שמאל-לימין) משני צידי המפריד, וזה **לא**
+         כפילות: היחידה מתקנת את המלבנים, והסימן מתקן את סדר התווים
+         בתוך קטע. נמדד בלעדיו: הקטע "0-" מצויר לבדו, המקף יושב
+         בקצהו, בסביבה עברית הוא נקרא ימין-לשמאל - והתוצאה בדף
+         הייתה "010-" במקום "0-10". הסימן הוא תו חזק, ולכן המקף
+         שנמצא בין שניים כאלה נשאר משמאל לימין בכל הקשר.
+         הוא נשאר במחרוזת המצוירת (רוחבו אפס) ואינו מנוקה. */
+      sp.textContent = m[0].replace(
+        /([0-9])([\-\u2013\u2014\/:])(?=[0-9])/g, '$1\u200E$2\u200E');
+      frag.appendChild(sp);
+      last = m.index + m[0].length;
     }
-    /* הרווח האחרון שיש אחריו תו שאינו רווח. רווח סופי (trailing)
-       אינו מצויר ממילא ואין טעם להקשיח אותו. */
-    var m = /^([\s\S]*) (\S+\s*)$/.exec(t);
-    if(m) nodes[i].nodeValue = m[1] + ' ' + m[2];
+    if(last < t.length) frag.appendChild(doc.createTextNode(t.substring(last)));
+    if(nodes[i].parentNode) nodes[i].parentNode.replaceChild(frag, nodes[i]);
   }
+}
+
+function rtlFixSpaces(root){
+  if(!root || !root.ownerDocument || !root.ownerDocument.createTreeWalker) return;
+  /* קודם מחברים מספרים ורק אחר כך מודדים רווחים: החיבור עשוי להזיז
+     שבירת שורה, ומדידה שנעשתה לפניו הייתה מתארת דף אחר. */
+  rtlJoinNumbers(root);
+  var doc = root.ownerDocument;
+  var w = doc.createTreeWalker(root, 4 /* SHOW_TEXT */, null, false);
+  var nodes = [], n;
+  while((n = w.nextNode())) nodes.push(n);
+  var rg = doc.createRange(), plan = [];
+  /* שני מעברים: קודם מודדים הכל, ורק אחר כך משנים. שינוי תוך כדי
+     מדידה מזיז את הפריסה, וכל מה שנמדד אחריו נמדד על דף אחר. */
+  for(var i = 0; i < nodes.length; i++){
+    var t = nodes[i].nodeValue;
+    if(!t || t.indexOf(' ') < 0) continue;
+    var cuts = [];
+    for(var k = 0; k < t.length; k++){
+      if(t.charAt(k) !== ' ') continue;
+      /* שתי עדויות, ו**כל אחת לבדה מספיקה**. נמדד 22/11: רווח בסוף
+         שורה מוצג ב-Chrome כ"תלוי" מחוץ לתיבת התוכן ומחזיר מלבן
+         ברוחב מלא, ולכן מבחן הרוחב לבדו פספס אותו ונשארה הידבקות
+         אחת בפסקה ("בתחילת השיעוראלא"). מבחן השורות תופס בדיוק את
+         זה: שכניו של הרווח יושבים בשתי שורות שונות. */
+      var a = k > 0 ? _chTop(rg, nodes[i], k - 1) : null;
+      var b = k + 1 < t.length ? _chTop(rg, nodes[i], k + 1) : null;
+      var broke = (a !== null && b !== null && Math.abs(a - b) > 0.5);
+      if(broke || !_chWide(rg, nodes[i], k)) cuts.push(k);
+    }
+    if(cuts.length) plan.push({ node: nodes[i], cuts: cuts });
+  }
+  for(var j = 0; j < plan.length; j++){
+    var arr = plan[j].node.nodeValue.split('');
+    /* הרווח **נשאר במקומו**, ולפניו נדחף תו ברוחב אפס. מחיקת הרווח
+       עצמו (מה שנוסה קודם) שינתה את שבירת השורה: מילה שלא נכנסה
+       לשורה קודם נכנסה פתאום, ונדבקה בלי רווח כלל. נמדד:
+       "השיעור,אלא". `\u200B` אינו תופס רוחב, וחוק LB8 שובר אחרי
+       `ZW SP*` - כלומר בדיוק במקום שבו השורה נשברה ממילא. נמדד
+       ששורת המיקומים של כל המילים יוצאת זהה לפני ואחרי. */
+    for(var m = 0; m < plan[j].cuts.length; m++)
+      arr[plan[j].cuts[m]] = '\u200B' + arr[plan[j].cuts[m]];
+    plan[j].node.nodeValue = arr.join('');
+  }
+}
+
+/* ===================================================================
+   כיוון הכתיבה בצילום   (22/11/26) — השורש של "אותיות דבוקות"
+   ===================================================================
+   נמדד על מערך שיעור אמיתי, ולא שוער: "לפני השיעור: להכין" יצא
+   "לפני :השיעור להכין", והכותרת "מערך שיעור - אבידה ומציאה" יצאה
+   "מערך שיעוראבידה ומציאה -". כלומר סימן הפיסוק קופץ לצד הלא נכון.
+
+   השורש, והוא בספרייה ולא אצלנו: html2canvas מפצל כל צומת טקסט
+   ל**מילים** (UAX#14), מחשב לכל מילה מלבן דרך `Range.getClientRects`
+   - ועד כאן המיקום נכון לגמרי - ואז מצייר כל מילה בנפרד ב-`fillText`
+   **בלי לקבוע `ctx.direction`**. ברירת המחדל של קנבס היא `ltr`, ולכן
+   מילה שמצוירת לבדה נשפטת כאילו היא משפט שמאל-לימין: תו נייטרלי
+   (נקודתיים, מקף, מרכאות, סוגר) בקצה המילה נדבק לקצה ההפוך. בתוך
+   הדף ב-DOM אין שום פגם - זה פגם של **הצילום** בלבד, בדיוק כמו
+   הרווח הנבלע מ-18/11.
+
+   התיקון: לעטוף את `fillText`/`strokeText` למשך הצילום ולקבוע בהם
+   `direction='rtl'`. הדפדפן מריץ אז את אלגוריתם הבידי המלא על כל
+   מילה, וזה כל מה שחסר.
+
+   **`textAlign='left'` הוא חלק מהתיקון ולא קישוט.** html2canvas
+   מעביר את `bounds.left` ומסתמך על `textAlign` ברירת המחדל `start`,
+   ו-`start` במצב rtl פירושו **הקצה הימני** - כלומר כל מילה הייתה
+   נדחקת שמאלה ברוחב שלה והדף היה יוצא הרוס. `left` הוא עוגן מוחלט
+   שאינו תלוי בכיוון, ולכן התיבה של המילה נשארת זהה לחלוטין.
+
+   למה זה ולא מה שנוסה אתמול: `foreignObjectRendering` תיקן את הבידי
+   אבל הוציא מלל מחוץ לדף, וצילום ישיר ב-html2canvas נפרד החזיר
+   עמודים שחורים. כאן העימוד, המיקום והמידות אינם משתנים כלל -
+   משתנה רק סדר התווים בתוך מילה שכבר צוירה במקום הנכון.
+
+   העטיפה **חייבת** לרדת ב-`pdfCleanup` (שרץ בכל סיום, גם בכישלון):
+   עטיפה שנשארת דלוקה משנה כל ציור קנבס אחר בדף.
+   =================================================================== */
+/* קטע שיש בו הסימון של `rtlFixSpaces` הוא קטע שנגמר ברווח **שאינו
+   קיים בפריסה** - הוא נבלע בסוף שורה, ולכן המלבן שנמדד לקטע מכיל
+   רק את המילה. בכתיבה מימין-לשמאל הרווח הזה מצויר בקצה שמאל ודוחף
+   את המילה ימינה ברוחבו, והיא נדבקת לשכנתה. מורידים אותו, והמילה
+   נוחתת בדיוק על המלבן שלה. */
+function bidiTrim(t){
+  var s = String(t == null ? '' : t);
+  if(s.indexOf('\u200B') < 0) return t;
+  return s.replace(/\u200B/g, '').replace(/[ \t\u00A0]+$/, '');
+}
+var _bidiWrap = null;
+function bidiDrawOn(){
+  if(_bidiWrap || typeof CanvasRenderingContext2D === 'undefined') return;
+  var P = CanvasRenderingContext2D.prototype;
+  if(typeof P.fillText !== 'function') return;
+  var f = P.fillText, s = P.strokeText;
+  P.fillText = function(t, x, y, w){
+    try{ this.direction = 'rtl'; this.textAlign = 'left'; }catch(e){}
+    t = bidiTrim(t);
+    return w === undefined ? f.call(this, t, x, y) : f.call(this, t, x, y, w);
+  };
+  if(typeof s === 'function'){
+    P.strokeText = function(t, x, y, w){
+      try{ this.direction = 'rtl'; this.textAlign = 'left'; }catch(e){}
+      t = bidiTrim(t);
+      return w === undefined ? s.call(this, t, x, y) : s.call(this, t, x, y, w);
+    };
+  }
+  _bidiWrap = { fill: f, stroke: s };
+}
+function bidiDrawOff(){
+  if(!_bidiWrap) return;
+  CanvasRenderingContext2D.prototype.fillText = _bidiWrap.fill;
+  if(typeof _bidiWrap.stroke === 'function')
+    CanvasRenderingContext2D.prototype.strokeText = _bidiWrap.stroke;
+  _bidiWrap = null;
 }
 
 /* צילום העמודים ושמירה — אותו מסלול של `savePdf`, עם עמודים שהוכנו
@@ -3086,6 +3359,7 @@ function savePdfPages(name, P, btn, token){
   }
   pdfNumber(P.pages);
   rtlFixSpaces(P.host);
+  bidiDrawOn();
   var opts = pdfOpts(name), pdf = null, i = 0;
   function step(){
     if(token && token.off) return Promise.resolve(null);
@@ -3680,6 +3954,227 @@ function halBodyLen(units){
 
 var HAL_MIN_BODY = 400;      /* פחות מזה אינו סיכום בהרחבה בשום פירוש */
 
+/* ===================================================================
+   שער נושאי הכלים   (22/11/26) — הפורט של `halacha.missing_nk`
+   ===================================================================
+   התלונה: "בכפתור סיכום הלכתי בהרחבה - שולחן ערוך נושאי כלים סימן
+   קפג יורה דעה - ונתן סיכום רק לשולחן ערוך בלי נושאי כלים".
+
+   מה נמדד, ומה **לא** היה הבעיה: ההבאה מספריא תקינה לגמרי. על סימן
+   קפ״ג ביו״ד חזרו שישה נושאי כלים בפועל (ט״ז, ש״ך, פתחי תשובה, באר
+   היטב, ביאור הגר״א, רע״א) - נמדד מול ספריא החיה. כלומר החומר הגיע
+   למנוע, והמנוע **דילג**. במדידה על אותו סימן: ט״ז, ש״ך ופתחי תשובה
+   נכנסו, באר היטב וביאור הגר״א נעלמו בשקט.
+
+   זה אותו פער בדיוק שתוקן בבוט ב-18/11: לסעיפי שו״ע ולאסופת מקורות
+   היה שער חובה + סבב השלמה, ולנושאי הכלים - שהם רוב החומר בהיקף -
+   לא היה שום שער, ולכן אף פעם לא נמדד שהם נעלמו. כאן זה פשוט לא
+   הועבר הלאה. אותו לקח של "כשמתקנים גשר, לבדוק את כל חמשת הגשרים".
+
+   ההבדל היחיד מהבוט, והוא נמדד ולא שוער: שם המודל ממלא את השדה
+   המובנה `who`, וכאן הוא כותב את נושאי הכלים **בתוך `html`** של שורת
+   nk אחת (`<ul><li><b>ט״ז (ס״ק י״א):</b> ...`). פורט ישר של הבוט היה
+   מדווח 100% חסרים על פלט מלא. לכן נקראים שני המקורות.
+   =================================================================== */
+
+var NK_MARK = /^---[ \t]*(.+?)[ \t]*---[ \t]*$/;
+var NK_SK = /\(ס[״"׳']?ק[^)]{0,14}\)/g;
+/* מילות הפניה: "עיין בתשו׳ X" הוא מראה מקום ואין בו מה לסכם. שמרני
+   בכוונה - בספק **דורשים** את הבלוק, כי בלוק מיותר הוא שורה מיותרת
+   ובלוק שנעלם הוא בדיוק התלונה. */
+var NK_REF_ONLY = /עיי?ן|ע[״"]ש|עי[׳']|צ[״"]ע/;
+
+function nkNorm(s){
+  return String(s == null ? '' : s).replace(/[״"׳']/g, '')
+    .replace(/[‎‏‪-‮]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+/* (שם נושא הכלים, הסעיף) מתוך "סמ״ע על סעיף ד׳". בחומר שהאפליקציה
+   מביאה מספריא אין "על סעיף" כלל, אבל חומר שהודבק מדף מקורות של
+   הבוט כן מכיל אותו. */
+function nkKey(name){
+  var s = String(name == null ? '' : name);
+  var m = s.match(/\s+על\s+סעיף\s+(\S+)\s*$/);
+  var who = nkNorm((m ? s.substring(0, m.index) : s).split(/\s*[—–-]\s*/)[0]);
+  return { who: who, seif: m ? nkNorm(m[1]).replace(/[^א-ת]/g, '') : '' };
+}
+
+/* כל בלוק `--- שם ---` בחומר, עם גופו. בלוק נגמר גם בכותרת הסעיף או
+   הסימן הבא (`===` / `########`) ולא רק בכותרת נושא כלים. */
+function nkBlocks(text){
+  var lines = String(text == null ? '' : text).split('\n');
+  var out = [], cur = null, i;
+  for(i = 0; i < lines.length; i++){
+    var m = lines[i].match(NK_MARK);
+    if(m){ cur = { name: m[1].trim(), body: [] }; out.push(cur); continue; }
+    if(!cur) continue;
+    if(/^(?:===|########)/.test(lines[i])){ cur = null; continue; }
+    cur.body.push(lines[i]);
+  }
+  for(i = 0; i < out.length; i++) out[i].body = out[i].body.join('\n').trim();
+  return out;
+}
+
+/* האם יש בבלוק הזה מה לסכם, או שכולו מראה מקום. */
+function nkWorth(body){
+  var b = String(body == null ? '' : body);
+  var sk = b.match(NK_SK) || [];
+  var core = b.replace(NK_SK, ' ').replace(/\s+/g, ' ')
+              .replace(/^[\s.:,]+/, '').replace(/[\s.:,]+$/, '');
+  var n = core ? core.split(' ').length : 0;
+  if(sk.length > 1) return true;        /* כמה ס״קים = תוכן, בלי קשר לאורך */
+  if(n >= 16) return true;
+  if(NK_REF_ONLY.test(core)) return false;
+  return n > 5;
+}
+
+/* שמות נושאי הכלים שיש להם תוכן בחומר, בסדר החומר ובלי כפילות. */
+function nkIn(text){
+  var b = nkBlocks(text), out = [], i;
+  for(i = 0; i < b.length; i++)
+    if(nkWorth(b[i].body) && out.indexOf(b[i].name) < 0) out.push(b[i].name);
+  return out;
+}
+
+/* שמות שנכתבו בתוך html של שורת nk. השם נמצא בפתח הפריט ובהדגשה
+   ("<li><b>ט״ז (ס״ק י״א):</b> ..."), ולכן נחתך בסוגר, בנקודתיים
+   או בתג. בלי זה פלט מלא היה נמדד כריק. */
+function nkFromHtml(html){
+  var h = String(html == null ? '' : html), out = [], m;
+  var rx = /<(?:li|b|p)>\s*(?:<b>)?\s*([^<:(]{2,40})/g;
+  while((m = rx.exec(h))){
+    var nm = nkNorm(m[1]).replace(/[\s.,:;–—-]+$/, '');
+    if(nm.length >= 2) out.push(nm);
+  }
+  return out;
+}
+
+/* מהפלט: לכל סעיף, אילו שמות נושאי כלים הוצהרו בשורת ה-nk שלו.
+   השדה המובנה מכריע; חיפוש "מכיל" בטקסט החופשי היה מסמן "(סמ״ע)"
+   שבתוך שורת טעם כאילו הנושא כוסה - המלכודת של `_seif_seen`. */
+function nkDeclared(unit){
+  var found = {}, parts = (unit && unit.parts) || [], p, b, r, w, z;
+  for(p = 0; p < parts.length; p++){
+    var blocks = (parts[p] && parts[p].blocks) || [];
+    for(b = 0; b < blocks.length; b++){
+      var blk = blocks[b] || {};
+      var head = String(blk.heading || blk.title || '');
+      var sm = head.match(/סעיף\s*([א-ת][א-ת״׳"']{0,3})/);
+      var key = sm ? nkNorm(sm[1]).replace(/[^א-ת]/g, '') : '';
+      if(!found[key]) found[key] = [];
+      var rows = blk.rows || [];
+      for(r = 0; r < rows.length; r++){
+        var row = rows[r] || {};
+        if(row.kind !== 'nk') continue;
+        var who = row.who || [];
+        for(w = 0; w < who.length; w++){
+          var nm = nkNorm((who[w] || {}).name);
+          /* "ש״ך ונתיבות המשפט" ברשומה אחת = שני נושאי כלים. הרווח
+             לפני ו״ו החיבור הוא חובה: בלעדיו `\s*ו` תופס את ה-ו׳
+             **בתוך** "נתיבות" ומפצל את השם, ואז פלט מושלם מדווח כחסר. */
+          var pieces = nm.split(/\s+ו(?=[א-ת])|\s*[,\/+]\s*/);
+          for(z = 0; z < pieces.length; z++){
+            var piece = pieces[z].replace(/^[\s()\[\]]+/, '').replace(/[\s()\[\]]+$/, '');
+            if(piece.length >= 2) found[key].push(piece);
+          }
+        }
+        if(!who.length) found[key] = found[key].concat(nkFromHtml(row.html));
+      }
+    }
+  }
+  return found;
+}
+
+/* אילו נושאי כלים שיש להם תוכן בחומר לא הוצהרו בפלט. שמרני בכוונה:
+   התאמה לפי ארבע אותיות ראשונות, כי המודל כותב "נתיבות המשפט" על
+   בלוק ששמו "נתיבות המשפט — ביאורים", ודרישת התאמה מלאה הייתה
+   מדווחת על חוסר שאינו קיים. */
+function missingNk(text, unit){
+  var want = nkIn(text);
+  if(!want.length) return [];
+  var found = nkDeclared(unit), anywhere = [], k, i, j;
+  for(k in found) if(found.hasOwnProperty(k)) anywhere = anywhere.concat(found[k]);
+  var gone = [];
+  for(i = 0; i < want.length; i++){
+    var key = nkKey(want[i]);
+    var pool = found[key.seif] || (key.seif ? [] : anywhere);
+    var head = key.who.substring(0, 4), hit = false;
+    for(j = 0; j < pool.length; j++)
+      if(head && (pool[j].indexOf(head) >= 0 || pool[j].substring(0, 4) === head)){
+        hit = true; break;
+      }
+    if(!hit) gone.push(want[i]);
+  }
+  return gone;
+}
+
+/* הוראת החובה לפרומפט. נשלחת **מראש**: סבב השלמה עולה פנייה שלמה,
+   והמנוע כאן עובד על מכסה יומית מוגבלת. */
+function mustCoverNk(text){
+  var want = nkIn(text), names = [], i;
+  if(!want.length) return '';
+  for(i = 0; i < want.length; i++)
+    names.push(String(want[i]).split(/\s+על\s+סעיף/)[0].trim());
+  return '⚠️ בחומר שלמטה יש ' + want.length + ' נושאי כלים, וכולם חובה: ' +
+    names.join(', ') + '.\n' +
+    'לכל אחד מהם רשומה נפרדת בשמו המדויק בתוך שורת "nk" של הסעיף שלו, ' +
+    'עם החידוש שלו במילים שלו. נושא כלים שלא קיבל רשומה נחשב חסר, גם אם ' +
+    'הזכרת אותו בסוגריים בתוך שורה אחרת, וגם אם דבריו דומים לאחר.\n\n';
+}
+
+/* רק הקטעים שהחוסר יושב בהם. בלי הצמצום הזה סבב ההשלמה שולח שוב את
+   כל היחידה - כלומר בדיוק את הבקשה שנשמט בה תוכן מלכתחילה. */
+function nkSource(chunk, gone){
+  var heads = [], i, h;
+  for(i = 0; i < gone.length; i++){
+    h = nkKey(gone[i]).who.substring(0, 4);
+    if(h) heads.push(h);
+  }
+  /* 22/11 - הגרסה הראשונה הוסיפה "את לשון השו״ע" כחיתוך של 6,000
+     תווים מתחילת השו״ע, והחומר כאן קטן מזה - כלומר היא החזירה את
+     **כל** בלוקי נושאי הכלים, גם אלה שכבר נכנסו, והצמצום לא צמצם
+     כלום. נתפס בבדיקה ולא בקריאת הקוד. עכשיו המסננת היא לפי בלוק:
+     לשון המקור נשמרת, ומדולגים רק בלוקים של נושאי כלים שאינם חסרים. */
+  var lines = String(chunk == null ? '' : chunk).split('\n');
+  var out = [], keep = true, total = 0;
+  for(i = 0; i < lines.length; i++){
+    var m = lines[i].match(NK_MARK);
+    if(m) keep = heads.indexOf(nkKey(m[1].trim()).who.substring(0, 4)) >= 0;
+    else if(/^(?:===|########)/.test(lines[i])) keep = true;   /* חזרה ללשון המקור */
+    if(!keep) continue;
+    out.push(lines[i]);
+    total += lines[i].length + 1;
+    if(total > 30000) break;   /* ההשלמה חייבת להיות קטנה מהבקשה המקורית */
+  }
+  return out.join('\n');
+}
+
+/* סבב השלמה אחד, בדיוק כמו בבוט. יותר מאחד הוא לולאה ששורפת מכסה. */
+function halFillNk(keys, chunk, d, say, token){
+  var unit = d && (d.unit || (d.parts ? d : null));
+  if(!unit) return Promise.resolve(null);
+  var gone = missingNk(chunk, unit);
+  if(!gone.length) return Promise.resolve(null);
+  if(say) say('משלים ' + gone.length + ' נושאי כלים שנשמטו…');
+  var ask = 'בסיכום הבא חסרים נושאי כלים שיש בחומר: ' + gone.slice(0, 14).join('; ') +
+    '.\nהוסף לכל אחד מהם רשומה בשמו בתוך שורת "nk" של הסעיף שלו, עם החידוש שלו, ' +
+    'בלי לקצר ובלי למחוק דבר ממה שכבר כתוב, ובלי לשנות את המבנה ואת הסדר. ' +
+    'החזר את אותו JSON במלואו.\n\nהחומר של מה שחסר:\n' + nkSource(chunk, gone) +
+    '\n\nהסיכום:\n' + JSON.stringify(d);
+  return askOne(keys, HAL_SYS, ask).then(function(r){
+    jobCheck(token);
+    if(!r || !r.text) return null;
+    var d2 = halParse(r.text);
+    var u2 = d2 && (d2.unit || (d2.parts ? d2 : null));
+    if(!u2) return null;
+    /* ההשלמה נבדקת על **הכיסוי** ועל אורך התוכן: תשובה שהוסיפה נושא
+       כלים אחד ואיבדה חצי סיכום אינה השלמה. */
+    if(missingNk(chunk, u2).length >= gone.length) return null;
+    if(halBodyLen([u2]) < halBodyLen([unit]) * 0.9) return null;
+    return d2;
+  }, function(){ return null; });
+}
+
 /* הרצת הסיכום: יחידה לכל חלק של החומר, פנייה אחת לכל יחידה.
    ברצף ולא במקביל — פניות מקבילות לאותו מפתח מחזירות 429, וזה
    מה שנמדד כאן ב-`askPaged`. */
@@ -3693,12 +4188,20 @@ function halRun(keys, material, extra, say, token){
                                     : 'בונה את הסיכום המובנה…');
       var head = 'החומר לסיכום' + (chunks.length > 1 ? (' (חלק ' + (i + 1) + ' מתוך ' +
         chunks.length + ')') : '') + ':\n\n';
-      var ask = (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') + head + chunk;
+      /* `mustCoverNk` **לפני** החומר: נושא כלים שנשמט הוא התלונה
+         הנפוצה כאן, והוראה מראש זולה מסבב השלמה. */
+      var ask = (extra ? 'הנחיה נוספת מהמשתמש: ' + extra + '\n\n' : '') +
+                mustCoverNk(chunk) + head + chunk;
       return askOne(keys, HAL_SYS, ask).then(function(r){
         jobCheck(token);
         if(!r || !r.text) return;
         via = r.via;
-        var d = halParse(r.text);
+        var first = halParse(r.text);
+        return halFillNk(keys, chunk, first, say, token)
+          .then(function(better){ return [r, better || first]; });
+      }).then(function(pair){
+        if(!pair) return;
+        var r = pair[0], d = pair[1];
         if(d && d.unit){
           units.push(d.unit);
           if(!meta) meta = d;
