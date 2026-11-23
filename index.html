@@ -247,6 +247,11 @@ footer{text-align:center;color:var(--muted);font-size:12.5px;padding:26px 0 10px
         <label for="txt" id="txtLabel">הטקסט</label>
         <textarea id="txt" placeholder="הדבק כאן את הטקסט… אפשר גם להדביק קישור לכתבה או לדף אינטרנט, ואקרא אותו בעצמי."></textarea>
         <div class="hint" id="modeHint"></div>
+        <!-- 23/11/26 — שלושת מסלולי דף הלימוד בגמרא. בבוט הטקסטים
+             אלה שלושה כפתורים נפרדים (`gemara_sheet.MODELS`), ולכל
+             מסלול סכמה, עיצוב ודף שאלות משלו. כאן היה פרומפט חופשי
+             אחד בלי שום בחירה, וזה חלק מה"לא מגיע לרמה הדרושה". -->
+        <div id="gemPick" class="hide" style="margin-top:10px"></div>
         <div class="row" style="margin-top:10px">
           <button class="btn sec" id="pick" type="button">📎 צרף קובץ</button>
           <button class="btn sec hide" id="clrFile" type="button">הסר קובץ</button>
@@ -426,6 +431,62 @@ function setMode(k){
     $('modeHint').textContent = m.hint;
     $('txtLabel').textContent = m.icon + ' ' + m.label;
   }
+  drawGemPick(k);
+  drawPedPick(k);
+}
+
+/* ---------- בוחר המסלול בדף הגמרא (23/11/26) ----------
+   שלושה מסלולים, בדיוק כמו שלושת הכפתורים בבוט. ברירת המחדל היא
+   א׳ (קלאסי) - אותה ברירת מחדל של הבוט, כדי שמי שלא בוחר יקבל את
+   מה שהוא מכיר.                                                  */
+var GEM_PICKED = 'A';
+function drawGemPick(k){
+  var box = $('gemPick');
+  if(!box) return;
+  if(k !== 'gemara' || typeof GEM_MODELS === 'undefined'){ box.className = 'hide'; return; }
+  box.className = '';
+  var h = '<div class="hint" style="margin-bottom:6px">המסלול:</div><div class="row">', key;
+  for(key in GEM_MODELS) if(GEM_MODELS.hasOwnProperty(key))
+    h += '<button type="button" class="btn ' + (key === GEM_PICKED ? '' : 'sec') +
+         '" data-gm="' + key + '" style="flex:1;min-width:110px;font-size:13px">' +
+         esc(GEM_MODELS[key]) + '</button>';
+  box.innerHTML = h + '</div><div class="hint" id="gemWhy" style="margin-top:6px"></div>';
+  $('gemWhy').textContent = GEM_ONE_LINE[GEM_PICKED] || '';
+  Array.prototype.forEach.call(box.querySelectorAll('[data-gm]'), function(b){
+    b.onclick = function(){
+      /* מסלול אחר הוא תוצר אחר, ולכן בחירה באמצע עבודה מבטלת אותה -
+         בדיוק כמו מעבר בין כפתורי המצבים (18/11/26). */
+      if(typeof cancelRun === 'function' && GEM_PICKED !== b.getAttribute('data-gm')) cancelRun(true);
+      GEM_PICKED = b.getAttribute('data-gm');
+      drawGemPick('gemara');
+    };
+  });
+}
+
+/* ---------- בוחר הקהל בתכנים הפדגוגיים (23/11/26) ----------
+   בבוט אלה שני כפתורים (`pedagogy.AUDIENCES`): מבוגרים/רבנים מול
+   נוער בני 14. התוצר שונה לגמרי - למבוגרים שיעור עם הערות שוליים
+   ודיון הלכתי, ולנוער דף לרב עם מחוון ודף תלמיד בשפה נגישה. כאן
+   היה פרומפט אחד לשני הקהלים, וזה החזיר דף אחד מעורבב.          */
+var PED_PICKED = 'adults';
+function drawPedPick(k){
+  var box = $('gemPick');
+  if(!box || k !== 'pedagogy' || typeof PED_AUDIENCES === 'undefined') return;
+  box.className = '';
+  var h = '<div class="hint" style="margin-bottom:6px">למי השיעור:</div><div class="row">', key;
+  for(key in PED_AUDIENCES) if(PED_AUDIENCES.hasOwnProperty(key))
+    h += '<button type="button" class="btn ' + (key === PED_PICKED ? '' : 'sec') +
+         '" data-pd="' + key + '" style="flex:1;min-width:130px;font-size:13px">' +
+         esc(PED_AUDIENCES[key]) + '</button>';
+  box.innerHTML = h + '</div><div class="hint" id="pedWhy" style="margin-top:6px"></div>';
+  $('pedWhy').textContent = PED_ONE_LINE[PED_PICKED] || '';
+  Array.prototype.forEach.call(box.querySelectorAll('[data-pd]'), function(b){
+    b.onclick = function(){
+      if(typeof cancelRun === 'function' && PED_PICKED !== b.getAttribute('data-pd')) cancelRun(true);
+      PED_PICKED = b.getAttribute('data-pd');
+      drawPedPick('pedagogy');
+    };
+  });
 }
 
 /* ===================================================================
@@ -4310,6 +4371,1652 @@ function halRun(keys, material, extra, say, token){
 }
 
 /* ==== END sheet_client ==== */
+/* ==== BEGIN gem_client ==== */
+/* ===================================================================
+   📖 דף לימוד בגמרא — הפורט של `gemara_sheet.py` + `gemara_render.py`
+   ===================================================================
+   23/11/26, בקשה מפורשת: "תשווה בין כפתור דף לימוד בגמרא (כולל שלושה
+   כפתורים של מסלולים קלאסי וכו') ... לבין האפליקציה החדשה. כרגע
+   האפליקציה לא מגיעה לרמה הדרושה. תתקן."
+
+   מה היה כאן עד עכשיו, ולמה זה לא הספיק: מצב `gemara` היה **פרומפט
+   חופשי** ב-Code.gs ("חלק את הדף לשלושה-ארבעה קטעי לימוד... לכל קטע:
+   כותרת, לשון הגמרא בקירוב..."). כלומר המודל החזיר טקסט רץ, אין שלושה
+   מסלולים, אין דף שאלות עם ניקוד, אין מחוון לרב, ו"לשון הגמרא בקירוב"
+   פירושה שהמודל **מעתיק** את המקור — ולכן הוא יכול לשנות אותו.
+
+   בבוט זה אחרת לגמרי, וזה מה שמשוכפל כאן:
+   · הנוסח והביאור מגיעים מספריא (נוסח ווליום מנוקד + ביאור שטיינזלץ),
+     והמודל **מפנה אליהם במספרי מקטעים** ואינו מעתיק. לכן אי אפשר
+     לשנות את לשון הגמרא.
+   · העמוד מתפצל לשלושה חלקי לימוד לפי הסוגיות (`split_parts`), והמשנה
+     תמיד במלואה בחלק הראשון.
+   · שלושה מסלולים (א׳ קלאסי · ב׳ מסלול · ג׳ דף עבודה), ולכל אחד
+     סכמת JSON משלו, עיצוב משלו ודף שאלות משלו.
+   · לכל חלק מופקים שלושה מסמכים: עמודי לימוד, דף שאלות, מחוון לרב.
+
+   הסכמות, ההנחיות וחוקי הנירמול הם **העתק מילה במילה** מהבוט, ו-
+   `prompt_sync.py` נכשל אם הם התפצלו. פיצול כאן אינו "ניסוח אחר" —
+   הוא תוצר אחר, וזו בדיוק התלונה שהתיקון הזה עונה עליה.          */
+
+var GEM_MODELS = { A: 'מודל א׳ · קלאסי', B: 'מודל ב׳ · מסלול', C: 'מודל ג׳ · דף עבודה' };
+var GEM_ONE_LINE = {
+  A: 'טבלה דו־טורית: מקור וביאור זה לצד זה, ושאלות לפי נושאים',
+  B: 'שלבים צבעוניים, \'עצור וחשוב\', תרשים זרימה לגמרא ושאלות בשלוש רמות',
+  C: 'דף עבודה: משלימים טבלה ודיאלוג, נכון/לא נכון, התאמה וחידות'
+};
+var GEM_NOTE = 'המקור: נוסח ווליום וביאור הרב עדין אבן־ישראל שטיינזלץ (ספריא), בעריכה והתאמה לכיתה ז׳';
+
+/* ---------- ההנחיה והסכמות: העתק מ-`gemara_sheet.SYSTEM`/`SPECS` ---------- */
+
+var GEM_SYS = "אתה מורה ותיק לגמרא בכיתה ז' תורנית (בית מדרש), שכותב דפי לימוד בגמרא לתלמידים בני 12-13.\n" +
+"כותבים לך קטע משנה/גמרא (בנוסח מנוקד) ולצידו הביאור של הרב שטיינזלץ. אתה כותב דף לימוד על הקטע הזה.\n\n" +
+"כללים מחייבים:\n" +
+"1. **הביאור והתוכן אך ורק על פי ביאור שטיינזלץ שניתן לך.** אל תוסיף סברות, דינים, שמות או מקורות שאינם בו ואל תמציא פסוקים. כשאתה לא בטוח - כתוב פחות.\n" +
+"2. עברית פשוטה וברורה לכיתה ז'. משפטים קצרים. מונח ארמי או הלכתי - מסבירים בסוגריים או במילון.\n" +
+"3. טבלה - רק היכן שהיא באמת עוזרת (מקרים, תאריכים, שיטות במחלוקת, השוואה בין דעות, שלבי הדיון). בלי טבלה בכוח.\n" +
+"4. אורך: דף הלימוד כולו מוגבל לשני עמודי A4 (כולל טקסט המקור). לכן ביאור קצר ותמציתי: עד 45 מילים לשורה בממוצע, ועד 650 מילים בסך הכול.\n" +
+"5. המקור עצמו **לא נכתב על ידך**: מפנים אליו במספרי מקטעים (\"src\") והמערכת מכניסה את הטקסט המקורי. כל מקטע חייב להופיע בדיוק פעם אחת, בסדר, ומקטע משנה לא יצטרף לשורה עם מקטע גמרא.\n" +
+"6. בתוך שדות הטקסט מותר רק התג <b>...</b> להדגשה. בלי HTML אחר ובלי מרקדאון.\n" +
+"7. הפלט: **אובייקט JSON אחד בלבד**, בלי טקסט לפניו או אחריו ובלי גדרות קוד.";
+
+var GEM_COMMON = '{\n' +
+' "title": "כותרת קצרה לדף, עד 6 מילים, עדיף כשאלה או נושא (למשל: מתי קוראים את המגילה?)",\n' +
+' "goal": "משפט עד שניים: מה נלמד ולמה זה מעניין",\n' +
+' "rows": [{"src": [0], "exp": "ביאור קצר לקטע (או למקטעים הצמודים בשורה)"}],\n' +
+' "tables": [{"after_row": 2, "title": "כותרת הטבלה", "headers": ["..."], "rows": [["..."]], "note": "משפט הסבר אחד או ריק"}],\n' +
+' "glossary": [["מונח", "פירוש בשפה פשוטה"]],\n' +
+' "summary": ["נקודה אחת לזכור", "..."],\n' +
+' "tips": ["הערה למורה: טעות נפוצה או רעיון להוראה"]';
+
+var GEM_SPEC = {};
+GEM_SPEC.A = GEM_COMMON + ',\n' +
+' "questions": [{"sec": "א", "q": "שאלה", "ans": "תשובה מצופה", "pts": 8, "look": "מה לבדוק/איך מנקדים"}]\n' +
+'}\n' +
+'שאלות: בדיוק 12, בארבעה פרקים לפי הסדר ("sec": "א" הבנת הכתוב · "ב" עבודה עם הטבלה/המקרים (אם אין טבלה - יישום) · "ג" הדיון בגמרא · "ד" חשיבה אישית ופתוחה). הניקוד של כל השאלות יחד בדיוק 100. השאלה האחרונה פתוחה. שאלות ישירות ובהירות, ברמת כיתה ז\'; בלי שאלות "מלכודת".';
+
+GEM_SPEC.B = GEM_COMMON + ',\n' +
+' "flow": [{"kind": "question|rule|conclusion|hint", "title": "שאלה / כלל / מסקנה / רמז / תשובה", "text": "שלב בנימוק של הגמרא, עד 30 מילים"}],\n' +
+' "stops": ["עצור וחשוב: שאלה קצרה להתבוננות (2 בדיוק)"],\n' +
+' "questions": [{"lvl": 1, "q": "שאלה", "ans": "תשובה מצופה", "pts": 6, "look": "מה לבדוק"}]\n' +
+'}\n' +
+'flow: 3 עד 5 שלבים שמסכמים את מהלך הגמרא כשרשרת נימוקים (ריק אם אין גמרא בקטע). שאלות: בדיוק 11: ארבע-חמש ברמה 1 (הבנה, 30 נק\' סה"כ), ארבע ברמה 2 (יישום, 40 נק\'), שתיים ברמה 3 (העמקה, 30 נק\'). סה"כ 100. אחת מהשאלות ברמה 3 היא סידור שלבי הנימוק: שדה נוסף "order": ["שלב ...", ...] (5 שלבים, **לפי הסדר הנכון**; המערכת תערבב) - ובשאלה זו "ans" נכתב כסידור.';
+
+GEM_SPEC.C = GEM_COMMON + ',\n' +
+' "blank_cells": [[0, 1]],\n' +
+' "dialogue": [{"who": "הגמרא שואלת", "side": "q|a", "text": "הסבר של שלב בדיון עם ____ במקום מילה חשובה", "src": [4], "answers": ["המילה שחסרה"]}],\n' +
+' "match": [{"term": "מונח", "def": "הגדרה"}],\n' +
+' "tf": [{"s": "משפט", "true": true, "fix": "אם לא נכון: התיקון"}],\n' +
+' "apply": [{"q": "שאלת יישום/חידה", "ans": "תשובה", "look": "מה לבדוק"}],\n' +
+' "open": {"q": "שאלה פתוחה: הסבר לחבר בכמה שורות...", "ans": "מה מצופה", "look": "..."}\n' +
+'}\n' +
+'blank_cells: אם יש טבלה אחת לפחות - רשימת תאים בטבלה הראשונה שהתלמיד ישלים ([שורה, עמודה], לפי מספור מ-0 בתוך השורות, בלי כותרות). 6 עד 9 תאים, בשורות שונות, שאפשר להסיק מהמקור או מהשורות הקודמות. אם אין טבלה - רשימה ריקה.\n' +
+'dialogue: ריק אם אין גמרא בקטע. אחרת 4 עד 6 בועות שמספרות את מהלך הגמרא כשיחה (שואל/משיב); בכל בועה רצוי חסר אחד (____), ובסך הכול 6 עד 8 חסרים; "answers" - המילה שחסרה בכל חסר לפי הסדר; "src" - מקטעי המקור שהבועה מבוססת עליהם (להצגה מתחת לבועה).\n' +
+'match: בדיוק 5 זוגות. tf: בדיוק 6 משפטים, 3 עד 4 מהם לא נכונים. apply: בדיוק 2 שאלות. אל תוסיף שדה ניקוד - המערכת מחשבת.';
+
+/* ---------- שליפת הדף מספריא: העתק של `fetch_page` ----------
+   חשוב, וזה ההבדל מ-`fetchDaf` שכבר קיים באפליקציה: שם מובאים
+   **גמרא + רש״י/תוספות**, וכאן מובאים **נוסח ווליום + ביאור
+   שטיינזלץ** עם סימון משנה/גמרא לכל מקטע. הסימון הוא מה שמאפשר
+   "המשנה תמיד במלואה" ואת הפיצול לפי סוגיות, ובלעדיו המודל מקבל
+   ערימת מקטעים בלי מבנה.                                        */
+
+var GEM_SEF = 'https://www.sefaria.org/api/texts/';
+
+function gemPlainTxt(s){
+  var t = String(s == null ? '' : s).replace(/<[^>]+>/g, '');
+  var d = document.createElement('textarea');
+  d.innerHTML = t;
+  return (d.value || t).replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+}
+
+function gemMarkers(st){
+  var out = {}, i, m, rx = /<big>([\s\S]*?)<\/big>/g;
+  for(i = 0; i < st.length; i++){
+    rx.lastIndex = 0;
+    while((m = rx.exec(st[i] || ''))){
+      if(m[1].indexOf('משנה') >= 0) out[i] = 'mishna';
+      else if(m[1].indexOf('גמרא') >= 0) out[i] = 'gemara';
+    }
+  }
+  return out;
+}
+
+var GEM_MARK_WORDS = ['מתני׳', 'גמ׳', 'מתני', 'גמ', 'מתניתין', 'גמרא', 'משנה', 'מתניתא'];
+
+function gemStripMarker(s, isHe){
+  var m = /^\s*<big>([\s\S]*?)<\/big>\s*/.exec(s || '');
+  if(!m) return s || '';
+  if(isHe){
+    var inner = gemPlainTxt(m[1]).replace(/[֑-ׇ]/g, '');
+    if(GEM_MARK_WORDS.indexOf(inner) < 0) return s;
+  }
+  return s.substring(m[0].length);
+}
+
+function gemGet(url){
+  return fetch(url).then(function(r){ return r.ok ? r.json() : null; });
+}
+
+function gemFetchRaw(en, daf, amud){
+  var code = en + '.' + daf + amud;
+  return Promise.all([
+    gemGet(GEM_SEF + encodeURIComponent(code) + '?commentary=0&context=0&lang=he'),
+    gemGet(GEM_SEF + encodeURIComponent('Steinsaltz_on_' + code) + '?lang=he&context=0')
+  ]).then(function(res){
+    var he = res[0], st = res[1];
+    if(!he || he.error || !he.he) throw new Error('אין דף כזה במסכת.');
+    var heL = (he.he instanceof Array) ? he.he : [he.he];
+    var stL = (st && st.he instanceof Array) ? st.he : [];
+    if(stL.length !== heL.length)
+      throw new Error('ביאור שטיינזלץ לדף הזה לא זמין בספריא (מספר המקטעים לא תואם).');
+    return [heL, stL];
+  });
+}
+
+function gemPrev(daf, amud){
+  if(amud === 'b') return [daf, 'a'];
+  return (daf - 1 >= 2) ? [daf - 1, 'b'] : null;
+}
+
+function gemBuildSegs(heL, stL, kinds){
+  var segs = [], i;
+  for(i = 0; i < heL.length; i++)
+    segs.push({ he: gemPlainTxt(gemStripMarker(heL[i], true)),
+                st: gemPlainTxt(gemStripMarker(stL[i], false)),
+                kind: kinds[i] });
+  return segs;
+}
+
+function gemFetchPage(en, daf, amud, say){
+  if(say) say('מביא מספריא: נוסח וביאור שטיינזלץ…');
+  return gemFetchRaw(en, daf, amud).then(function(pair){
+    var heL = pair[0], stL = pair[1], mk = gemMarkers(stL), i;
+    var keys = [], any = false;
+    for(i = 0; i < heL.length; i++) if(mk[i]){ keys.push(i); any = true; }
+    var first = any ? Math.min.apply(null, keys) : null;
+    var state = (first !== null && mk[first] === 'gemara') ? 'mishna' : 'gemara';
+    var kinds = [];
+    for(i = 0; i < heL.length; i++){
+      if(mk[i]) state = mk[i];
+      kinds.push(any ? state : 'gemara');
+    }
+    var segs = gemBuildSegs(heL, stL, kinds);
+    /* המשנה התחילה בעמוד הקודם? "המשנה תמיד במלואה" היא דרישה
+       מפורשת של המשתמש, ולכן מצרפים את תחילתה. */
+    if(kinds.length && kinds[0] === 'mishna' && mk[0] !== 'mishna'){
+      var p = gemPrev(daf, amud);
+      if(p) return gemFetchRaw(en, p[0], p[1]).then(function(pp){
+        var pmk = gemMarkers(pp[1]), lastM = null, lastG = null, j;
+        for(j in pmk) if(pmk.hasOwnProperty(j)){
+          if(pmk[j] === 'mishna') lastM = Math.max(lastM === null ? -1 : lastM, +j);
+          else lastG = Math.max(lastG === null ? -1 : lastG, +j);
+        }
+        if(lastM !== null && (lastG === null || lastG < lastM)){
+          var head = [];
+          for(j = lastM; j < pp[0].length; j++)
+            head.push({ he: gemPlainTxt(gemStripMarker(pp[0][j], true)),
+                        st: gemPlainTxt(gemStripMarker(pp[1][j], false)), kind: 'mishna' });
+          segs = head.concat(segs);
+        }
+        return gemClean(segs);
+      })['catch'](function(){ return gemClean(segs); });
+    }
+    return gemClean(segs);
+  });
+}
+
+function gemClean(segs){
+  var out = [], i;
+  for(i = 0; i < segs.length; i++) if(segs[i].he) out.push(segs[i]);
+  if(!out.length) throw new Error('הדף ריק בספריא.');
+  return out;
+}
+
+/* ---------- פיצול העמוד לחלקי לימוד: העתק של `split_parts` ---------- */
+
+function gemEven(items, k){
+  /* חלוקה שווה בקירוב לפי אורך, בלי לשבור מקטע. */
+  var out = [], i;
+  if(!items.length) return [];
+  if(k <= 1) return [items.slice()];
+  var total = 0;
+  for(i = 0; i < items.length; i++) total += (items[i].he || '').length;
+  var target = total / k, cur = [], size = 0;
+  for(i = 0; i < items.length; i++){
+    cur.push(items[i]);
+    size += (items[i].he || '').length;
+    var left = items.length - i - 1;
+    if(out.length < k - 1 && size >= target && left >= (k - out.length - 1)){
+      out.push(cur); cur = []; size = 0;
+    }
+  }
+  if(cur.length) out.push(cur);
+  while(out.length > k){ out[out.length - 2] = out[out.length - 2].concat(out.pop()); }
+  return out;
+}
+
+function gemSplitParts(segs){
+  var mishna = [], gem = [], i;
+  for(i = 0; i < segs.length; i++)
+    (segs[i].kind === 'mishna' ? mishna : gem).push(segs[i]);
+  if(!mishna.length) return gemEven(gem, 3);
+  var total = 0;
+  for(i = 0; i < gem.length; i++) total += (gem[i].he || '').length;
+  var first = mishna.slice(), size = 0;
+  for(i = 0; i < mishna.length; i++) size += (mishna[i].he || '').length;
+  i = 0;
+  while(i < gem.length && (size < total / 3 || i < 2)){
+    first.push(gem[i]); size += (gem[i].he || '').length; i++;
+  }
+  return [first].concat(gemEven(gem.slice(i), 2));
+}
+
+/* ---------- הפרומפט: העתק של `_prompt` ---------- */
+
+function gemPrompt(label, part, idx, total, model){
+  var lines = [], i, hasM = false;
+  for(i = 0; i < part.length; i++){
+    var kind = part[i].kind === 'mishna' ? 'משנה' : 'גמרא';
+    if(part[i].kind === 'mishna') hasM = true;
+    lines.push('### מקטע ' + i + ' (' + kind + ')\nנוסח: ' + part[i].he +
+               '\nביאור שטיינזלץ: ' + (part[i].st || '') + '\n');
+  }
+  return 'הקטע: ' + label + ' - חלק ' + idx + ' מתוך ' + total + ' של העמוד.\n' +
+    (hasM ? 'בקטע יש משנה במלואה - כתוב עליה ביאור ברור והשתמש בטבלה אם יש בה מקרים/תאריכים/דעות.'
+          : 'הקטע כולו גמרא.') + '\n\n' +
+    lines.join('\n') +
+    '\n\nכתוב את אובייקט ה-JSON בדיוק במבנה הזה (שמות השדות באנגלית, התוכן בעברית):\n' +
+    GEM_SPEC[model];
+}
+
+/* ---------- נירמול: העתק של `_normalize` ----------
+   זה מה שמחייב את התוצר, והוא הסיבה שהתוצר באפליקציה יוצא זהה: המקור
+   נכנס מספריא לפי `src`, כל מקטע מופיע בדיוק פעם אחת, הניקוד מנורמל
+   ל-100, ו-`_ok` הוא השער שמחליט אם לנסות שוב. בלי זה "מודל שהחזיר
+   JSON" שווה ל"דף תקין", וזה לא נכון.                              */
+
+function gemNum(x, dflt){
+  var n = parseInt(x, 10);
+  return isNaN(n) ? dflt : n;
+}
+
+function gemNorm(d, part, model){
+  if(!d || typeof d !== 'object') return null;
+  var n = part.length, rows = [], seen = {}, i, j;
+  var raw = (d.rows && d.rows.length) ? d.rows : [];
+  for(i = 0; i < raw.length; i++){
+    var x = raw[i];
+    if(!x || typeof x !== 'object') continue;
+    var src = [], sl = x.src;
+    if(typeof sl === 'number') sl = [sl];
+    if(!sl || !sl.length) continue;
+    for(j = 0; j < sl.length; j++){
+      var k = gemNum(sl[j], -1);
+      if(k >= 0 && k < n && !seen[k] && src.indexOf(k) < 0) src.push(k);
+    }
+    src.sort(function(a, b){ return a - b; });
+    if(!src.length) continue;
+    /* שורה לא מערבבת משנה וגמרא */
+    var groups = [];
+    for(j = 0; j < src.length; j++){
+      var last = groups.length ? groups[groups.length - 1] : null;
+      var prev = last ? last[last.length - 1] : -99;
+      if(last && part[prev].kind === part[src[j]].kind && src[j] === prev + 1) last.push(src[j]);
+      else groups.push([src[j]]);
+    }
+    for(j = 0; j < groups.length; j++)
+      rows.push({ src: groups[j], exp: j === 0 ? String(x.exp == null ? '' : x.exp) : '' });
+    for(j = 0; j < src.length; j++) seen[src[j]] = 1;
+  }
+  for(i = 0; i < n; i++) if(!seen[i]) rows.push({ src: [i], exp: '' });
+  rows.sort(function(a, b){ return a.src[0] - b.src[0]; });
+  d.rows = rows;
+
+  var tabs = [], tl = d.tables || [];
+  for(i = 0; i < tl.length; i++){
+    var t = tl[i];
+    if(!t || typeof t !== 'object' || !t.headers || !t.headers.length || !t.rows || !t.rows.length) continue;
+    var w = t.headers.length, fixed = [];
+    for(j = 0; j < t.rows.length; j++){
+      if(!(t.rows[j] instanceof Array)) continue;
+      var row = t.rows[j].slice();
+      while(row.length < w) row.push('');
+      fixed.push(row.slice(0, w).map(function(c){ return String(c == null ? '' : c); }));
+    }
+    t.rows = fixed;
+    t.after_row = Math.min(Math.max(gemNum(t.after_row, rows.length - 1), 0), Math.max(rows.length - 1, 0));
+    tabs.push(t);
+  }
+  d.tables = tabs.slice(0, 2);
+  var gl = [];
+  var gll = d.glossary || [];
+  for(i = 0; i < gll.length; i++)
+    if(gll[i] instanceof Array && gll[i].length === 2) gl.push([String(gll[i][0]), String(gll[i][1])]);
+  d.glossary = gl.slice(0, 12);
+  d.summary = (d.summary || []).map(String).slice(0, 4);
+  d.tips = (d.tips || []).map(String).slice(0, 5);
+  d.title = String(d.title || 'דף לימוד').replace(/^\s+|\s+$/g, '');
+  d.goal = String(d.goal == null ? '' : d.goal);
+
+  var qs = [], ql = d.questions || [];
+  for(i = 0; i < ql.length; i++) if(ql[i] && typeof ql[i] === 'object' && ql[i].q) qs.push(ql[i]);
+  for(i = 0; i < qs.length; i++) qs[i].pts = Math.max(1, gemNum(qs[i].pts, 5));
+  if(model === 'A' || model === 'B'){
+    var tot = 0;
+    for(i = 0; i < qs.length; i++) tot += qs[i].pts;
+    if(qs.length && tot !== 100){
+      for(i = 0; i < qs.length; i++) qs[i].pts = Math.max(1, Math.round(qs[i].pts * 100 / tot));
+      var s2 = 0;
+      for(i = 0; i < qs.length; i++) s2 += qs[i].pts;
+      qs[qs.length - 1].pts += 100 - s2;
+    }
+    d.questions = qs;
+    if(model === 'A'){
+      var allSec = true;
+      for(i = 0; i < qs.length; i++) if(!qs[i].sec) allSec = false;
+      d._ok = qs.length >= 8 && allSec;
+    } else d._ok = qs.length >= 8;
+  } else {
+    var keys = ['match', 'tf', 'apply'];
+    for(i = 0; i < keys.length; i++){
+      var src2 = d[keys[i]] || [], keep = [];
+      for(j = 0; j < src2.length; j++) if(src2[j] && typeof src2[j] === 'object') keep.push(src2[j]);
+      d[keys[i]] = keep;
+    }
+    var dl = d.dialogue || [], dk = [];
+    for(i = 0; i < dl.length; i++) if(dl[i] && typeof dl[i] === 'object' && dl[i].text) dk.push(dl[i]);
+    d.dialogue = dk;
+    var bc = d.blank_cells || [], bk = [];
+    for(i = 0; i < bc.length; i++) if(bc[i] instanceof Array && bc[i].length === 2) bk.push(bc[i]);
+    d.blank_cells = bk;
+    if(!d.open || typeof d.open !== 'object')
+      d.open = { q: 'הסבירו לחבר שלא למד את הדף, בשלוש שורות, מה למדנו בו.', ans: 'תשובה פתוחה', look: '' };
+    d._ok = d.match.length >= 3 && d.tf.length >= 4 && d.apply.length >= 1;
+  }
+  var fl = d.flow || [], fk = [];
+  for(i = 0; i < fl.length; i++) if(fl[i] && typeof fl[i] === 'object' && fl[i].text) fk.push(fl[i]);
+  d.flow = fk.slice(0, 6);
+  d.stops = (d.stops || []).map(String).slice(0, 3);
+  return d;
+}
+
+/* ---------- ההרצה ----------
+   שני ניסיונות לכל חלק, בדיוק כמו `gemara_sheet.generate`: מודל חינמי
+   שמחזיר JSON מחמיץ שדה מדי פעם, והשלמה בניסיון שני זולה מהודעת
+   כישלון למשתמש.                                                   */
+
+function gemJson(txt){
+  /* חילוץ מאוזן, סופר סוגריים ומכבד מחרוזות. 23/11: הקוד שחתך
+     מהסוגר הראשון עד האחרון נשבר על תשובה של מודל חשיבה — בבלוק
+     החשיבה יש סוגריים משל עצמו (המודל מצטט את הסכמה שביקשנו),
+     ולכן המחרוזת שנחתכה אינה JSON בכלל. זה הפורט של
+     `gemini.json_block` בבוט, ואותו באג בדיוק תוקן שם היום.      */
+  var s = String(txt == null ? '' : txt);
+  s = s.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, ' ');
+  s = s.replace(/^\s*```(?:json)?\s*|\s*```\s*$/g, '');
+  var best = '', i = 0;
+  while(true){
+    var a = s.indexOf('{', i);
+    if(a < 0) break;
+    var depth = 0, inStr = false, esc = false, j;
+    for(j = a; j < s.length; j++){
+      var c = s.charAt(j);
+      if(inStr){
+        if(esc) esc = false;
+        else if(c === '\\') esc = true;
+        else if(c === '"') inStr = false;
+        continue;
+      }
+      if(c === '"') inStr = true;
+      else if(c === '{') depth++;
+      else if(c === '}'){
+        depth--;
+        if(depth === 0){
+          var cand = s.substring(a, j + 1);
+          try{
+            var o = JSON.parse(cand);
+            if(o && typeof o === 'object' && !(o instanceof Array) && cand.length > best.length) best = cand;
+          } catch(e){}
+          break;
+        }
+      }
+    }
+    i = a + 1;
+  }
+  if(!best) return null;
+  try{ return JSON.parse(best); } catch(e){ return null; }
+}
+
+function gemOnePart(keys, label, part, idx, total, model, say, token){
+  var base = gemPrompt(label, part, idx, total, model);
+  function attempt(k){
+    jobCheck(token);
+    if(say) say('בונה חלק ' + idx + ' מתוך ' + total + (k > 1 ? ' (ניסיון ' + k + ')' : '') + '…');
+    var ask = k === 1 ? base : base +
+      '\n\nהניסיון הקודם לא החזיר JSON תקין או שחסרו בו שדות. החזר אובייקט JSON אחד שלם בלבד.';
+    return askOne(keys, GEM_SYS, ask).then(function(r){
+      jobCheck(token);
+      var d = r && r.text ? gemNorm(gemJson(r.text), part, model) : null;
+      if(d && d._ok) return { d: d, part: part, idx: idx, via: r.via };
+      if(k < 2) return attempt(k + 1);
+      /* חלק שלא חזר תקין אינו מפיל את כל הדף: מה שכן חזר מוגש,
+         והחסר נאמר במפורש. זה החצי שנשבר בבוט ב-23/11 — שם חלק 3
+         נכשל והמשתמש קיבל הודעת שגיאה על דף שלושה-רבעים מוכן. */
+      return null;
+    });
+  }
+  return attempt(1);
+}
+
+function gemRun(keys, segs, model, label, say, token){
+  var parts = gemSplitParts(segs), out = [], via = '';
+  if(!parts.length) return Promise.resolve(null);
+  return parts.reduce(function(chain, part, i){
+    return chain.then(function(){
+      return gemOnePart(keys, label, part, i + 1, parts.length, model, say, token)
+        .then(function(res){ if(res){ out.push(res); via = res.via || via; } });
+    });
+  }, Promise.resolve()).then(function(){
+    if(!out.length) return null;
+    return { items: out, total: parts.length, model: model, label: label, via: via };
+  });
+}
+
+/* ===================================================================
+   העיצוב — הפורט של `gemara_render.py`
+   ===================================================================
+   ה-CSS מוזרק פעם אחת כ-`<style>` עם תחילית `.gemdoc`, כדי שלא ידרוס
+   את עיצוב האפליקציה. הסלקטורים עצמם זהים לבוט, ולכן התוצר נראה אותו
+   דבר ולא "דומה".                                                 */
+
+var GEM_BASE = '* { box-sizing: border-box }\n' +
+'.gemdoc { font-family: "Gisha","Arial",sans-serif; font-size: 10.2pt; line-height: 1.4; color: #1c1c1c; direction: rtl; text-align: right }\n' +
+'.gemdoc .src { font-family: "David","Times New Roman",serif; font-size: 13pt; line-height: 1.55 }\n' +
+'.gemdoc .src.s { font-size: 12pt; line-height: 1.5 }\n' +
+'.gemdoc table { border-collapse: collapse; width: 100% }\n' +
+'.gemdoc td, .gemdoc th { vertical-align: top }\n' +
+'.gemdoc h1, .gemdoc h2, .gemdoc h3, .gemdoc p { margin: 0 }\n' +
+'.gemdoc .d { font-size: 8.5pt; color: #555 }\n' +
+'.gemdoc .nm { display: flex; gap: 8mm; font-size: 9.5pt; margin: 2mm 0 3mm }\n' +
+'.gemdoc .nm span { flex: 1; border-bottom: 1px solid #777; padding-bottom: 1px }\n' +
+'.gemdoc .lines span { display: block; border-bottom: 1px solid #999; height: 6.3mm }\n' +
+'.gemdoc .pt { font-size: 8.5pt; color: #666 }\n' +
+'.gemdoc .qq { margin-bottom: 2.3mm }\n' +
+'.gemdoc .note { font-size: 8.2pt; color: #555; margin-top: 3mm }\n' +
+'.gemdoc .kh { font-size: 15pt; margin-bottom: 1mm }\n' +
+'.gemdoc .ks { font-size: 9pt; color: #555; margin-bottom: 3mm }\n' +
+'.gemdoc .kt th { background: #e9e9e9; border: 1px solid #999; padding: 1.2mm 2mm; font-size: 9pt }\n' +
+'.gemdoc .kt td { border: 1px solid #aaa; padding: 1.4mm 2mm; font-size: 9pt; line-height: 1.32 }\n' +
+'.gemdoc .kt td.n, .gemdoc .kt td.p { text-align: center; font-weight: bold }\n' +
+'.gemdoc .kt td.lf { color: #444; font-size: 8.6pt }\n' +
+'.gemdoc .tips { margin-top: 3mm; border: 1px solid #999; padding: 2mm 4mm; font-size: 9pt }\n' +
+'.gemdoc .tips ul { margin: 1mm 0 0; padding-right: 5mm }\n';
+
+var GEM_CSS = {};
+GEM_CSS.A =
+'.gemdoc .top { border-bottom: 3px double #1f3a5f; padding-bottom: 2mm; margin-bottom: 3mm; display: flex; justify-content: space-between; align-items: flex-end }\n' +
+'.gemdoc .top h1 { font-size: 19pt; color: #1f3a5f }\n' +
+'.gemdoc .top .sub { font-size: 10pt; color: #444 }\n' +
+'.gemdoc .top .tag { font-size: 9pt; color: #1f3a5f; border: 1px solid #1f3a5f; padding: .6mm 3mm; border-radius: 3mm }\n' +
+'.gemdoc .goal { background: #eef2f8; border-right: 4px solid #1f3a5f; padding: 2mm 3mm; margin-bottom: 3mm; font-size: 9.8pt }\n' +
+'.gemdoc .two th { background: #1f3a5f; color: #fff; padding: 1.2mm 2mm; font-size: 9.5pt }\n' +
+'.gemdoc .two td { border: 1px solid #b7c2d3; padding: 2mm 3mm }\n' +
+'.gemdoc .two td.s { width: 49%; background: #fbfbf7 }\n' +
+'.gemdoc .two td.e { width: 51% }\n' +
+'.gemdoc .two td.tw { padding: 2mm 3mm; background: #fff }\n' +
+'.gemdoc .gl { margin-top: 2.5mm; border: 1px solid #b7c2d3; padding: 1.8mm 3mm; font-size: 9.3pt; background: #fafafa }\n' +
+'.gemdoc .gl b { color: #1f3a5f }\n' +
+'.gemdoc .tbl th { background: #1f3a5f; color: #fff; padding: 1.2mm 1.5mm; font-size: 9.3pt; border: 1px solid #fff }\n' +
+'.gemdoc .tbl td { border: 1px solid #9aa8bf; padding: 1.3mm 2mm; text-align: center; font-size: 9.5pt }\n' +
+'.gemdoc .tbl td.r { background: #eef2f8; font-weight: bold }\n' +
+'.gemdoc .cap { font-size: 9pt; color: #444; margin: 1.5mm 0 1mm }\n' +
+'.gemdoc .tt { font-weight: bold; color: #1f3a5f; margin-bottom: 1mm }\n' +
+'.gemdoc .sum { border: 2px solid #1f3a5f; padding: 2.5mm 4mm; margin-top: 3mm }\n' +
+'.gemdoc .sum ul { margin: 1mm 0 0; padding-right: 5mm }\n' +
+'.gemdoc .sec { background: #1f3a5f; color: #fff; padding: .8mm 3mm; font-weight: bold; margin: 3mm 0 2mm; font-size: 10pt }\n';
+
+GEM_CSS.B =
+'.gemdoc .hero { background: linear-gradient(100deg,#0f766e,#14a3a0); color: #fff; border-radius: 3mm; padding: 3mm 5mm; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3mm }\n' +
+'.gemdoc .hero h1 { font-size: 19pt }\n' +
+'.gemdoc .hero .sub { font-size: 9.5pt; opacity: .92 }\n' +
+'.gemdoc .step { margin-bottom: 3mm }\n' +
+'.gemdoc .sh { display: flex; align-items: center; gap: 2.5mm; margin-bottom: 1.6mm }\n' +
+'.gemdoc .sn { background: #f59e0b; color: #fff; width: 7mm; height: 7mm; border-radius: 50%; text-align: center; line-height: 7mm; font-weight: bold; flex: none }\n' +
+'.gemdoc .sh h2 { font-size: 12.5pt; color: #0f766e }\n' +
+'.gemdoc .mis { background: #f4fbfa; border: 1.5px solid #0f766e; border-radius: 2.5mm; padding: 2.5mm 4mm }\n' +
+'.gemdoc .mis .src { font-size: 12.6pt; line-height: 1.5 }\n' +
+'.gemdoc .stop { background: #fff7e0; border: 1.5px dashed #f59e0b; border-radius: 2.5mm; padding: 1.8mm 3.5mm; margin-top: 2mm; font-size: 9.8pt }\n' +
+'.gemdoc .stop b { color: #b45309 }\n' +
+'.gemdoc .chips { display: flex; flex-wrap: wrap; gap: 1.5mm; margin-top: 1.6mm }\n' +
+'.gemdoc .chip { background: #e6f6f4; border: 1px solid #99d5cf; border-radius: 2mm; padding: .6mm 2.4mm; font-size: 9pt }\n' +
+'.gemdoc .chip b { color: #0f766e }\n' +
+'.gemdoc .exp { font-size: 9.9pt; margin: 1.4mm 0 }\n' +
+'.gemdoc .exp li { margin: .5mm 0 }\n' +
+'.gemdoc .tb th { background: #0f766e; color: #fff; padding: 1.2mm 1.5mm; font-size: 9.2pt; border: 1px solid #fff }\n' +
+'.gemdoc .tb td { border: 1px solid #99d5cf; padding: 1.3mm 2mm; text-align: center; font-size: 9.5pt }\n' +
+'.gemdoc .tb td.r { background: #e6f6f4; font-weight: bold }\n' +
+'.gemdoc .cap { font-size: 9pt; color: #444; margin: 1.5mm 0 1mm }\n' +
+'.gemdoc .tt { font-weight: bold; color: #0f766e; margin-bottom: 1mm }\n' +
+'.gemdoc .flow { display: flex; flex-direction: column; gap: 1mm; margin-top: 1.5mm }\n' +
+'.gemdoc .fb { border-radius: 2.5mm; padding: 1.7mm 3.5mm; font-size: 9.7pt; border: 1.5px solid }\n' +
+'.gemdoc .fb .t { font-weight: bold; font-size: 9pt; margin-bottom: .6mm }\n' +
+'.gemdoc .fq { background: #fff7e0; border-color: #f59e0b }\n' +
+'.gemdoc .fa { background: #e6f6f4; border-color: #0f766e }\n' +
+'.gemdoc .fk { background: #eaf1ff; border-color: #3b6fd6 }\n' +
+'.gemdoc .ar { text-align: center; color: #0f766e; font-size: 11pt; line-height: .9; font-weight: bold }\n' +
+'.gemdoc .gsrc { background: #fbfbf7; border: 1px solid #cfd8d6; border-radius: 2mm; padding: 1.8mm 3.5mm; margin-bottom: 1.2mm }\n' +
+'.gemdoc .gsrc .src { font-size: 11.6pt; line-height: 1.45 }\n' +
+'.gemdoc .gsrc .b { font-size: 9.2pt; color: #0f5c56; margin-top: .6mm }\n' +
+'.gemdoc .sum { background: #fff7e0; border: 1.5px dashed #f59e0b; border-radius: 2.5mm; padding: 2mm 3.5mm; margin-top: 3mm; font-size: 9.8pt }\n' +
+'.gemdoc .sec2 { padding: .8mm 3mm; font-weight: bold; margin: 3mm 0 2mm; font-size: 10.2pt; border-radius: 2mm; color: #fff }\n' +
+'.gemdoc .l1 { background: #16a34a } .gemdoc .l2 { background: #f59e0b } .gemdoc .l3 { background: #dc2626 }\n' +
+'.gemdoc .ord { margin: 1mm 0 0; padding-right: 0; list-style: none }\n' +
+'.gemdoc .ord li { margin: .8mm 0 }\n' +
+'.gemdoc .ord .bx { display: inline-block; width: 6mm; height: 5mm; border: 1.3px solid #555; border-radius: 1mm; vertical-align: middle; margin-left: 2mm }\n';
+
+GEM_CSS.C =
+'.gemdoc .hd { border: 2.5px solid #6d28d9; border-radius: 3mm; padding: 2.4mm 5mm; display: flex; justify-content: space-between; align-items: center; margin-bottom: 3mm; background: #faf7ff }\n' +
+'.gemdoc .hd h1 { font-size: 18pt; color: #6d28d9 }\n' +
+'.gemdoc .hd .sub { font-size: 9.5pt; color: #444 }\n' +
+'.gemdoc .hd .who { font-size: 9pt; text-align: left; line-height: 1.7 }\n' +
+'.gemdoc .hd .who span { display: inline-block; width: 30mm; border-bottom: 1px solid #555 }\n' +
+'.gemdoc .box { border: 1.6px solid #6d28d9; border-radius: 2.5mm; padding: 2.4mm 4mm; margin-bottom: 3mm }\n' +
+'.gemdoc .box .tt { display: inline-block; background: #6d28d9; color: #fff; font-weight: bold; font-size: 9.2pt; padding: .3mm 3mm; border-radius: 0 0 2mm 2mm; margin: -2.4mm 0 1.4mm }\n' +
+'.gemdoc .mis { background: #fffdf2; border-color: #d4a017 }\n' +
+'.gemdoc .mis .tt { background: #d4a017 }\n' +
+'.gemdoc .mis .src { font-size: 12.4pt; line-height: 1.52 }\n' +
+'.gemdoc .task { background: #ede9fe; border-radius: 2mm; padding: 1.6mm 3mm; margin-top: 1.8mm; font-size: 9.7pt }\n' +
+'.gemdoc .gl2 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1mm 4mm; font-size: 9.3pt; margin-top: 1.8mm }\n' +
+'.gemdoc .gl2 b { color: #6d28d9 }\n' +
+'.gemdoc .tc th { background: #6d28d9; color: #fff; padding: 1.2mm; font-size: 9.2pt; border: 1px solid #fff }\n' +
+'.gemdoc .tc td { border: 1px solid #b9a5e8; padding: 1.35mm 2mm; text-align: center; font-size: 9.5pt; height: 7.4mm }\n' +
+'.gemdoc .tc td.r { background: #ede9fe; font-weight: bold }\n' +
+'.gemdoc .tc td.bl { background: #fffbe6 }\n' +
+'.gemdoc .tk td.bl { background: #fde68a; font-weight: bold }\n' +
+'.gemdoc .dlg { display: flex; flex-direction: column; gap: 1.6mm }\n' +
+'.gemdoc .bub { border-radius: 3mm; padding: 1.5mm 3.2mm; font-size: 9.7pt; max-width: 92%; border: 1.3px solid }\n' +
+'.gemdoc .bq { background: #ede9fe; border-color: #6d28d9; align-self: flex-start }\n' +
+'.gemdoc .ba { background: #e8f7ee; border-color: #16a34a; align-self: flex-end }\n' +
+'.gemdoc .bub .who2 { font-weight: bold; font-size: 8.8pt }\n' +
+'.gemdoc .gline { font-family: "David"; font-size: 11pt; line-height: 1.45; color: #333; margin-top: .8mm; border-top: 1px dotted #aaa; padding-top: .8mm }\n' +
+'.gemdoc .u { display: inline-block; min-width: 20mm; border-bottom: 1.4px solid #333; height: 4.4mm; vertical-align: bottom }\n' +
+'.gemdoc .mt td { padding: 1.2mm 3mm; font-size: 9.8pt; border: 1px solid #b9a5e8 }\n' +
+'.gemdoc .mt td.n { width: 8mm; text-align: center; font-weight: bold; background: #ede9fe }\n' +
+'.gemdoc .mt td.sp { width: 10mm }\n' +
+'.gemdoc .qh { background: #6d28d9; color: #fff; padding: .8mm 3mm; font-weight: bold; margin: 2.8mm 0 1.8mm; font-size: 10pt; border-radius: 2mm }\n' +
+'.gemdoc .tf { display: flex; gap: 2mm; align-items: baseline; margin-bottom: 1.6mm }\n' +
+'.gemdoc .tf .ch { white-space: nowrap; font-size: 9.2pt }\n' +
+'.gemdoc .tf .ch i { display: inline-block; width: 4mm; height: 4mm; border: 1.3px solid #444; vertical-align: middle; margin: 0 1mm }\n' +
+'.gemdoc .cap { font-size: 9pt; color: #444 }\n';
+
+var _gemStyled = {};
+function gemStyle(model){
+  if(_gemStyled[model]) return;
+  var s = document.createElement('style');
+  s.id = 'gemCss-' + model;
+  s.textContent = GEM_BASE + GEM_CSS[model];
+  document.head.appendChild(s);
+  _gemStyled[model] = 1;
+}
+
+/* ---------- עזרי HTML: העתק של `gemara_render` ---------- */
+
+function gemEsc(t){
+  var s = String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s.replace(/&lt;b&gt;/g, '<b>').replace(/&lt;\/b&gt;/g, '</b>');
+}
+function gemSrcTxt(part, idxs){
+  var out = [], i;
+  for(i = 0; i < idxs.length; i++)
+    if(idxs[i] >= 0 && idxs[i] < part.length) out.push(gemEsc(part[idxs[i]].he));
+  return out.join(' ');
+}
+function gemKind(part, row){ return part[row.src[0]].kind; }
+
+function gemTbl(t, cls, blank, fillKey){
+  var h = '', i, j;
+  for(i = 0; i < t.headers.length; i++) h += '<th>' + gemEsc(t.headers[i]) + '</th>';
+  var body = '';
+  for(i = 0; i < t.rows.length; i++){
+    var tds = '';
+    for(j = 0; j < t.rows[i].length; j++){
+      var cell = t.rows[i][j];
+      if(blank && blank[i + ',' + j])
+        tds += fillKey ? '<td class="bl">' + gemEsc(cell) + '</td>' : '<td class="bl">&nbsp;</td>';
+      else tds += '<td' + (j === 0 ? ' class="r"' : '') + '>' + gemEsc(cell) + '</td>';
+    }
+    body += '<tr>' + tds + '</tr>';
+  }
+  var cap = t.note ? '<div class="cap">' + gemEsc(t.note) + '</div>' : '';
+  return '<table class="' + cls + '"><tr>' + h + '</tr>' + body + '</table>' + cap;
+}
+function gemGloss(d){
+  var out = [], i;
+  for(i = 0; i < d.glossary.length; i++)
+    out.push('<b>' + gemEsc(d.glossary[i][0]) + '</b> = ' + gemEsc(d.glossary[i][1]));
+  return out.join(' · ');
+}
+
+/* ---------- מודל א׳ ---------- */
+
+var GEM_SEC_A = { 'א': 'הבנת הכתוב', 'ב': 'עבודה עם הטבלה והמקרים', 'ג': 'הדיון בגמרא', 'ד': 'חשיבה' };
+
+function gemLessonA(d, part, label){
+  var h = '<div class="top"><div><h1>' + gemEsc(d.title) + '</h1><div class="sub">' +
+          gemEsc(label) + '</div></div><div class="tag">דף לימוד · כיתה ז׳</div></div>';
+  if(d.goal) h += '<div class="goal"><b>מה נלמד?</b> ' + gemEsc(d.goal) + '</div>';
+  h += '<table class="two">';
+  var last = null, i, j;
+  for(i = 0; i < d.rows.length; i++){
+    var row = d.rows[i], k = gemKind(part, row);
+    if(k !== last){
+      h += '<tr><th>' + (k === 'mishna' ? 'המשנה (במלואה)' : 'הגמרא') + '</th><th>ביאור</th></tr>';
+      last = k;
+    }
+    h += '<tr><td class="s"><div class="src">' + gemSrcTxt(part, row.src) + '</div></td>' +
+         '<td class="e">' + gemEsc(row.exp) + '</td></tr>';
+    for(j = 0; j < d.tables.length; j++)
+      if(d.tables[j].after_row === i)
+        h += '<tr><td colspan="2" class="tw"><div class="tt">' + gemEsc(d.tables[j].title || '') +
+             '</div>' + gemTbl(d.tables[j], 'tbl') + '</td></tr>';
+  }
+  h += '</table>';
+  if(d.glossary.length) h += '<div class="gl"><b>מילון:</b> ' + gemGloss(d) + '</div>';
+  if(d.summary.length){
+    h += '<div class="sum"><b>מה למדנו?</b><ul>';
+    for(i = 0; i < d.summary.length; i++) h += '<li>' + gemEsc(d.summary[i]) + '</li>';
+    h += '</ul></div>';
+  }
+  return h + '<div class="note">' + GEM_NOTE + '</div>';
+}
+
+function gemQuestA(d, label){
+  var h = '<h1 style="color:#1f3a5f">שאלות לתלמיד — ' + gemEsc(label) + '</h1>' +
+          '<div class="nm"><span>שם: </span><span>כיתה: </span><span>תאריך: </span></div>';
+  var last = null, n = d.questions.length, i;
+  for(i = 0; i < n; i++){
+    var q = d.questions[i];
+    if(q.sec !== last){
+      h += '<div class="sec">' + gemEsc(q.sec) + '. ' + (GEM_SEC_A[q.sec] || '') + '</div>';
+      last = q.sec;
+    }
+    var lines = (String(q.q).length < 70 && i !== n - 1) ? 1 : 2;
+    h += '<div class="qq"><b>' + (i + 1) + '.</b> ' + gemEsc(q.q) +
+         ' <span class="pt">(' + q.pts + ' נק׳)</span><div class="lines">' +
+         new Array(lines + 1).join('<span></span>') + '</div></div>';
+  }
+  return h;
+}
+
+/* ---------- מודל ב׳ ---------- */
+
+var GEM_FLOW_CLS = { question: ['fq', '❓ שאלה'], rule: ['fk', '⚖️ כלל'],
+                     conclusion: ['fa', '✅ מסקנה'], hint: ['fk', '🔎 רמז'] };
+var GEM_LEVELS = { 1: ['l1', '🟢 רמה 1 — הבנה'], 2: ['l2', '🟡 רמה 2 — יישום'],
+                   3: ['l3', '🔴 רמה 3 — העמקה'] };
+
+function gemStep(n, title, body){
+  return '<div class="step"><div class="sh"><div class="sn">' + n + '</div><h2>' +
+         gemEsc(title) + '</h2></div>' + body + '</div>';
+}
+function gemChips(pairs){
+  var h = '<div class="chips">', i;
+  for(i = 0; i < pairs.length; i++)
+    h += '<span class="chip"><b>' + gemEsc(pairs[i][0]) + '</b> = ' + gemEsc(pairs[i][1]) + '</span>';
+  return h + '</div>';
+}
+
+function gemLessonB(d, part, label){
+  var h = '<div class="hero"><div><h1>' + gemEsc(d.title) + '</h1><div class="sub">' +
+          gemEsc(label) + ' · כיתה ז׳</div></div><div style="font-size:22pt">📜</div></div>';
+  var mrows = [], grows = [], i, k;
+  for(i = 0; i < d.rows.length; i++)
+    (gemKind(part, d.rows[i]) === 'mishna' ? mrows : grows).push(d.rows[i]);
+  var stops = d.stops.slice(), gl = d.glossary;
+  var half = (mrows.length && grows.length) ? Math.ceil(gl.length / 2) : gl.length;
+  var n = 1;
+  if(mrows.length){
+    var srcs = [];
+    for(i = 0; i < mrows.length; i++) srcs.push(gemSrcTxt(part, mrows[i].src));
+    var mis = '<div class="mis"><div class="src">' + srcs.join(' ') + '</div></div>';
+    if(stops.length) mis += '<div class="stop">' + gemEsc(stops.shift()) + '</div>';
+    h += gemStep(n++, 'קוראים את המשנה — כולה', mis);
+    var exp = '<ul class="exp">';
+    for(i = 0; i < mrows.length; i++) if(mrows[i].exp) exp += '<li>' + gemEsc(mrows[i].exp) + '</li>';
+    h += gemStep(n++, 'מפענחים: מי, מתי ולמה', exp + '</ul>' + gemChips(gl.slice(0, half)));
+  }
+  for(i = 0; i < d.tables.length; i++){
+    var body = d.tables[i].title ? '<div class="tt">' + gemEsc(d.tables[i].title) + '</div>' : '';
+    body += gemTbl(d.tables[i], 'tb');
+    if(stops.length) body += '<div class="stop">' + gemEsc(stops.shift()) + '</div>';
+    h += gemStep(n++, 'הטבלה — מסדרים את התמונה', body);
+  }
+  if(grows.length){
+    var b2 = '';
+    for(i = 0; i < grows.length; i++){
+      b2 += '<div class="gsrc"><div class="src s">' + gemSrcTxt(part, grows[i].src) + '</div>';
+      if(grows[i].exp) b2 += '<div class="b">💡 ' + gemEsc(grows[i].exp) + '</div>';
+      b2 += '</div>';
+    }
+    if(d.flow.length){
+      b2 += '<div class="flow">';
+      for(k = 0; k < d.flow.length; k++){
+        var f = d.flow[k], cf = GEM_FLOW_CLS[f.kind] || ['fk', '➡️'];
+        b2 += '<div class="fb ' + cf[0] + '"><div class="t">' + gemEsc(f.title || cf[1]) +
+              '</div>' + gemEsc(f.text) + '</div>';
+        if(k < d.flow.length - 1) b2 += '<div class="ar">▼</div>';
+      }
+      b2 += '</div>';
+    }
+    b2 += mrows.length ? gemChips(gl.slice(half)) : gemChips(gl);
+    if(stops.length && !mrows.length) b2 += '<div class="stop">' + gemEsc(stops.shift()) + '</div>';
+    h += gemStep(n++, 'הגמרא — חוקרים את השאלה', b2);
+  }
+  if(d.summary.length){
+    var sl = [];
+    for(i = 0; i < d.summary.length; i++) sl.push(gemEsc(d.summary[i]));
+    h += '<div class="sum"><b>לסיכום:</b> ' + sl.join(' · ') + '</div>';
+  }
+  return h + '<div class="note">' + GEM_NOTE + '</div>';
+}
+
+function gemShuffled(items){
+  /* סדר מעורבב **קבוע**, כך שהמחוון יכול לשחזר אותו. העתק של
+     `_shuffled`: ערבוב מקרי היה מייצר מחוון שלא מתאים לדף. */
+  var n = items.length, idx = [], i;
+  for(i = 0; i < n; i++) idx.push(i);
+  var sh = 2 % n;
+  idx = n > 2 ? idx.slice(sh).concat(idx.slice(0, sh)) : idx.slice().reverse();
+  var same = true;
+  for(i = 0; i < n; i++) if(idx[i] !== i) same = false;
+  if(same && n > 1) idx = idx.slice().reverse();
+  var out = [];
+  for(i = 0; i < n; i++) out.push([idx[i], items[idx[i]]]);
+  return out;
+}
+
+function gemQuestB(d, label){
+  var h = '<div class="hero" style="padding:2mm 5mm"><div><h1 style="font-size:16pt">שאלות — שלוש רמות</h1>' +
+          '<div class="sub">' + gemEsc(label) + ' · התחילו מהירוק — ועלו</div></div></div>' +
+          '<div class="nm"><span>שם: </span><span>כיתה: </span><span>תאריך: </span></div>';
+  var last = null, i, j;
+  for(i = 0; i < d.questions.length; i++){
+    var q = d.questions[i];
+    var lvl = GEM_LEVELS[q.lvl] ? q.lvl : 2;
+    if(lvl !== last){
+      var tot = 0;
+      for(j = 0; j < d.questions.length; j++) if(d.questions[j].lvl === lvl) tot += d.questions[j].pts;
+      h += '<div class="sec2 ' + GEM_LEVELS[lvl][0] + '">' + GEM_LEVELS[lvl][1] +
+           ' (' + tot + ' נק׳)</div>';
+      last = lvl;
+    }
+    if(q.order instanceof Array && q.order.length >= 3){
+      var sh = gemShuffled(q.order.map(String)), items = '';
+      for(j = 0; j < sh.length; j++) items += '<li><span class="bx"></span>' + gemEsc(sh[j][1]) + '</li>';
+      h += '<div class="qq"><b>' + (i + 1) + '.</b> ' + gemEsc(q.q) + ' (כתבו 1–' +
+           q.order.length + ' בריבועים) <span class="pt">(' + q.pts + ' נק׳)</span>' +
+           '<ul class="ord">' + items + '</ul></div>';
+      continue;
+    }
+    var lines = String(q.q).length < 70 ? 1 : 2;
+    h += '<div class="qq"><b>' + (i + 1) + '.</b> ' + gemEsc(q.q) +
+         ' <span class="pt">(' + q.pts + ' נק׳)</span><div class="lines">' +
+         new Array(lines + 1).join('<span></span>') + '</div></div>';
+  }
+  return h;
+}
+
+/* ---------- מודל ג׳ ---------- */
+
+function gemCloze(text){
+  var s = gemEsc(text), n = (s.match(/_{3,}/g) || []).length;
+  return [s.replace(/_{3,}/g, '<span class="u"></span>'), n];
+}
+function gemBlankSet(d){
+  var out = {}, t = d.tables.length ? d.tables[0] : null, i;
+  if(!t) return out;
+  for(i = 0; i < d.blank_cells.length; i++){
+    var r = gemNum(d.blank_cells[i][0], -1), c = gemNum(d.blank_cells[i][1], -1);
+    if(r >= 0 && r < t.rows.length && c > 0 && c < t.headers.length) out[r + ',' + c] = 1;
+  }
+  return out;
+}
+function gemBlankCount(b){ var n = 0, k; for(k in b) if(b.hasOwnProperty(k)) n++; return n; }
+function gemBlankKeys(b){
+  var out = [], k;
+  for(k in b) if(b.hasOwnProperty(k)) out.push(k.split(',').map(Number));
+  out.sort(function(a, z){ return a[0] - z[0] || a[1] - z[1]; });
+  return out;
+}
+
+function gemLessonC(d, part, label){
+  var h = '<div class="hd"><div><h1>' + gemEsc(d.title) + '</h1><div class="sub">' +
+          gemEsc(label) + ' · דף עבודה לכיתה ז׳</div></div>' +
+          '<div class="who">שם: <span></span><br>כיתה: <span></span></div></div>';
+  var mrows = [], grows = [], i, j;
+  for(i = 0; i < d.rows.length; i++)
+    (gemKind(part, d.rows[i]) === 'mishna' ? mrows : grows).push(d.rows[i]);
+  if(mrows.length){
+    var srcs = [];
+    for(i = 0; i < mrows.length; i++) srcs.push(gemSrcTxt(part, mrows[i].src));
+    h += '<div class="box mis"><div class="tt">המשנה — במלואה (סמנו בצהוב את המילים החשובות)</div>' +
+         '<div class="src">' + srcs.join(' ') + '</div></div>';
+  }
+  if(mrows.length || !d.dialogue.length){
+    var base = mrows.length ? mrows : grows, ex = [];
+    for(i = 0; i < base.length; i++) if(base[i].exp) ex.push('• ' + gemEsc(base[i].exp));
+    var g = '';
+    for(i = 0; i < Math.min(d.glossary.length, 9); i++)
+      g += '<div><b>' + gemEsc(d.glossary[i][0]) + '</b> = ' + gemEsc(d.glossary[i][1]) + '</div>';
+    h += '<div class="box"><div class="tt">מה כתוב כאן? בקצרה</div><div style="font-size:9.9pt">' +
+         ex.join('<br>') + '</div><div class="gl2">' + g + '</div></div>';
+  }
+  var blank = gemBlankSet(d), hasB = gemBlankCount(blank) > 0;
+  if(d.tables.length){
+    h += '<div class="box"><div class="tt">' + (hasB ? 'טבלה להשלמה' : 'טבלה') + ': ' +
+         gemEsc(d.tables[0].title || '') + '</div>' + gemTbl(d.tables[0], 'tc', blank, false);
+    if(hasB) h += '<div class="task">✏️ <b>משימה:</b> השלימו את התאים הריקים לפי הכתוב למעלה. ' +
+                  'בסוף תבדקו את עצמכם מול טבלת התשובות של המורה.</div>';
+    h += '</div>';
+    for(i = 1; i < d.tables.length; i++)
+      h += '<div class="box"><div class="tt">' + gemEsc(d.tables[i].title || '') + '</div>' +
+           gemTbl(d.tables[i], 'tc') + '</div>';
+  }
+  if(grows.length){
+    if(d.dialogue.length){
+      h += '<div class="box"><div class="tt">הגמרא כשיחה — שואל / משיב (השלימו את החסר)</div><div class="dlg">';
+      var shown = {};
+      for(i = 0; i < d.dialogue.length; i++){
+        var b = d.dialogue[i], cz = gemCloze(b.text);
+        var cls = b.side === 'q' ? 'bq' : 'ba', ss = [], sl = b.src || [];
+        var uniq = [];
+        for(j = 0; j < sl.length; j++){
+          var v = gemNum(sl[j], -1);
+          if(v >= 0 && v < part.length && !shown[v] && uniq.indexOf(v) < 0 &&
+             part[v].kind !== 'mishna') uniq.push(v);
+        }
+        uniq.sort(function(a, z){ return a - z; });
+        for(j = 0; j < uniq.length; j++) shown[uniq[j]] = 1;
+        var src = uniq.length ? '<div class="gline">' + gemSrcTxt(part, uniq) + '</div>' : '';
+        h += '<div class="bub ' + cls + '"><div class="who2">' + gemEsc(b.who || '') + ':</div>' +
+             cz[0] + src + '</div>';
+      }
+      h += '</div></div>';
+      var rest = [];
+      for(i = 0; i < part.length; i++) if(part[i].kind !== 'mishna' && !shown[i]) rest.push(i);
+      if(rest.length){
+        h += '<div class="box"><div class="tt">המשך הגמרא</div>';
+        for(i = 0; i < rest.length; i++)
+          h += '<div class="src s">' + gemSrcTxt(part, [rest[i]]) + '</div>';
+        h += '</div>';
+      }
+    } else {
+      h += '<div class="box"><div class="tt">הגמרא</div>';
+      for(i = 0; i < grows.length; i++)
+        h += '<div class="src s">' + gemSrcTxt(part, grows[i].src) + '</div>' +
+             '<div style="font-size:9.6pt;margin-bottom:1.5mm">' + gemEsc(grows[i].exp) + '</div>';
+      h += '</div>';
+    }
+    if(d.glossary.length && !mrows.length){
+      var g2 = '';
+      for(i = 0; i < d.glossary.length; i++)
+        g2 += '<div><b>' + gemEsc(d.glossary[i][0]) + '</b> = ' + gemEsc(d.glossary[i][1]) + '</div>';
+      h += '<div class="box"><div class="tt">מילון</div><div class="gl2">' + g2 + '</div></div>';
+    }
+  }
+  return h + '<div class="note">' + GEM_NOTE + '</div>';
+}
+
+function gemPlanC(d){
+  var blank = gemBlankSet(d), nb = gemBlankCount(blank), cloze = 0, i;
+  for(i = 0; i < d.dialogue.length; i++) cloze += gemCloze(d.dialogue[i].text)[1];
+  var p = { table: nb ? 18 : 0, match: 10, tf: 24, cloze: cloze ? 16 : 0, open: 20 };
+  p.apply = 100 - (p.table + p.match + p.tf + p.cloze + p.open);
+  p.n_blank = nb; p.n_cloze = cloze;
+  return p;
+}
+function gemAlloc(total, n){
+  if(!n) return [];
+  var base = [], i;
+  for(i = 0; i < n; i++) base.push(Math.floor(total / n));
+  var left = total - Math.floor(total / n) * n;
+  for(i = 0; i < left; i++) base[n - 1 - i] += 1;
+  return base;
+}
+function gemMatchPerm(n){
+  var idx = [], i;
+  for(i = 0; i < n; i++) idx.push(i);
+  var sh = 2 % n;
+  return n > 2 ? idx.slice(sh).concat(idx.slice(0, sh)) : idx.slice().reverse();
+}
+
+var GEM_AB5 = 'אבגדה', GEM_AB6 = 'אבגדהו', GEM_AB3 = 'אבג';
+
+function gemQuestC(d, label){
+  var p = gemPlanC(d), i;
+  var h = '<div class="hd" style="padding:1.6mm 5mm"><div><h1 style="font-size:15pt">שאלות לבדיקה עצמית</h1>' +
+          '<div class="sub">' + gemEsc(label) + '</div></div>' +
+          '<div class="who">שם: <span></span> כיתה: <span style="width:15mm"></span></div></div>';
+  var n = 0;
+  if(p.table){
+    n++;
+    h += '<div class="qh">שאלה ' + n + ' (' + p.table + ' נק׳) — השלימו את הטבלה בעמוד הלימוד</div>' +
+         '<div style="font-size:9.6pt">אין צורך לכתוב כאן; המורה בודק את הטבלה בעמוד הלימוד.</div>';
+  }
+  var m = d.match.slice(0, 5);
+  n++;
+  var perm = gemMatchPerm(m.length), rows = '';
+  for(i = 0; i < m.length; i++)
+    rows += '<tr><td class="n">' + GEM_AB5.charAt(i) + '</td><td>' + gemEsc(m[i].term) +
+            '</td><td class="sp"></td><td class="n">' + (i + 1) + '</td><td>' +
+            gemEsc(m[perm[i]].def) + '</td></tr>';
+  var marks = [];
+  for(i = 0; i < m.length; i++) marks.push(GEM_AB5.charAt(i) + '__');
+  h += '<div class="qh">שאלה ' + n + ' (' + p.match + ' נק׳) — התאימו מונח להסבר (כתבו מספר)</div>' +
+       '<table class="mt">' + rows + '</table><div style="font-size:9pt;margin-top:1mm">' +
+       marks.join(' ') + '</div>';
+  n++;
+  var tf = d.tf.slice(0, 6);
+  h += '<div class="qh">שאלה ' + n + ' (' + p.tf + ' נק׳) — נכון או לא נכון? אם לא נכון — תקנו</div>';
+  for(i = 0; i < tf.length; i++)
+    h += '<div class="tf"><div style="flex:1">' + GEM_AB6.charAt(i) + '. ' + gemEsc(tf[i].s) +
+         ' <span style="display:inline-block;border-bottom:1px solid #777;width:40mm"></span></div>' +
+         '<div class="ch"><i></i>נכון <i></i>לא נכון</div></div>';
+  if(p.cloze){
+    n++;
+    h += '<div class="qh">שאלה ' + n + ' (' + p.cloze + ' נק׳) — השלימו את הדיאלוג של הגמרא בעמוד הלימוד</div>';
+  }
+  var ap = d.apply.slice(0, 3);
+  n++;
+  h += '<div class="qh">שאלה ' + n + ' (' + p.apply + ' נק׳) — יישום וחידות</div>';
+  for(i = 0; i < ap.length; i++)
+    h += '<div class="qq">' + GEM_AB3.charAt(i) + '. ' + gemEsc(ap[i].q) +
+         '<div class="lines"><span></span></div></div>';
+  n++;
+  h += '<div class="qh">שאלה ' + n + ' (' + p.open + ' נק׳) — הסבירו לחבר</div>' +
+       '<div class="qq">' + gemEsc(d.open.q) +
+       '<div class="lines"><span></span><span></span><span></span></div></div>';
+  return h;
+}
+
+/* ---------- המחוון ---------- */
+
+function gemKeyPage(title, label, rows, tips, extra){
+  var total = 0, tr = '', i;
+  for(i = 0; i < rows.length; i++) total += gemNum(rows[i][3], 0);
+  for(i = 0; i < rows.length; i++)
+    tr += '<tr><td class="n">' + rows[i][0] + '</td><td>' + rows[i][1] + '</td><td>' +
+          rows[i][2] + '</td><td class="p">' + rows[i][3] + '</td><td class="lf">' +
+          rows[i][4] + '</td></tr>';
+  var t = '';
+  for(i = 0; i < tips.length; i++) t += '<li>' + gemEsc(tips[i]) + '</li>';
+  return '<h1 class="kh">מחוון לרב — ' + gemEsc(title) + '</h1>' +
+    '<p class="ks">' + gemEsc(label) + ' · סה״כ ' + total + ' נקודות · 90 ומעלה: שליטה מלאה · ' +
+    '75–89: טוב, כדאי לחזור על הנקודות הקשות · מתחת ל־75: ללמד שוב</p>' +
+    '<table class="kt"><tr><th style="width:5%">#</th><th style="width:22%">שאלה</th>' +
+    '<th style="width:36%">תשובה מצופה</th><th style="width:6%">נק׳</th>' +
+    '<th>מה לבדוק / הערות</th></tr>' + tr + '</table>' + (extra || '') +
+    (t ? '<div class="tips"><b>טעויות נפוצות ורעיונות להוראה</b><ul>' + t + '</ul></div>' : '');
+}
+
+function gemKeyAB(model, d, label){
+  var rows = [], i, j;
+  for(i = 0; i < d.questions.length; i++){
+    var q = d.questions[i], ans = gemEsc(q.ans);
+    if(q.order instanceof Array && q.order.length >= 3){
+      var sh = gemShuffled(q.order.map(String)), bits = [];
+      for(j = 0; j < sh.length; j++) bits.push('פריט ' + (j + 1) + ' — ' + (sh[j][0] + 1));
+      ans = 'מה לכתוב בכל ריבוע (לפי סדר הפריטים בדף): ' + bits.join(', ') + '<br>' + ans;
+    }
+    rows.push([i + 1, gemEsc(q.q), ans, q.pts, gemEsc(q.look)]);
+  }
+  return gemKeyPage(model === 'A' ? 'מודל א׳ · דף שאלות' : 'מודל ב׳ · שלוש רמות',
+                    label, rows, d.tips, '');
+}
+
+function gemKeyC(d, label){
+  var p = gemPlanC(d), rows = [], n = 0, extra = '', i, j;
+  var blank = gemBlankSet(d), bk = gemBlankKeys(blank);
+  if(p.table){
+    n++;
+    var t = d.tables[0], cells = [];
+    for(i = 0; i < bk.length; i++)
+      cells.push(gemEsc(t.rows[bk[i][0]][0]) + '/' + gemEsc(t.headers[bk[i][1]]) + ': ' +
+                 gemEsc(t.rows[bk[i][0]][bk[i][1]]));
+    rows.push([n, 'השלמת הטבלה בעמוד הלימוד', cells.join('; '), p.table,
+               bk.length + ' תאים · חלוקה שווה']);
+    extra = '<div style="margin-top:3mm"><b>הטבלה המלאה (התאים שהתלמידים משלימים מסומנים):</b>' +
+            gemTbl(t, 'tc tk', blank, true) + '</div>';
+  }
+  n++;
+  var m = d.match.slice(0, 5), perm = gemMatchPerm(m.length), inv = {}, pairs = [];
+  for(i = 0; i < m.length; i++) inv[perm[i]] = i + 1;
+  for(i = 0; i < m.length; i++)
+    pairs.push(GEM_AB5.charAt(i) + '—' + inv[i] + ' (' + gemEsc(m[i].term) + ')');
+  rows.push([n, 'התאמת מונחים להסברים', pairs.join('; '), p.match, '2 נק׳ לכל התאמה']);
+  n++;
+  var tf = d.tf.slice(0, 6), ans = [];
+  for(i = 0; i < tf.length; i++)
+    ans.push(GEM_AB6.charAt(i) + '. ' + (tf[i]['true'] ? 'נכון'
+      : 'לא נכון' + (tf[i].fix ? ' — ' + gemEsc(tf[i].fix) : '')));
+  rows.push([n, 'נכון / לא נכון ותיקון', ans.join('; '), p.tf,
+             'חצי על ההכרעה וחצי על התיקון (בנכונים — הכול על ההכרעה)']);
+  if(p.cloze){
+    n++;
+    var words = [];
+    for(i = 0; i < d.dialogue.length; i++){
+      var aw = d.dialogue[i].answers || [];
+      for(j = 0; j < aw.length; j++) words.push(gemEsc(aw[j]));
+    }
+    rows.push([n, 'השלמת הדיאלוג של הגמרא', words.join('; '), p.cloze,
+               p.n_cloze + ' חסרים · חלוקה שווה; שגיאת אות קטנה אינה פוסלת']);
+  }
+  n++;
+  var ap = d.apply.slice(0, 3), apPts = gemAlloc(p.apply, ap.length);
+  for(i = 0; i < ap.length; i++)
+    rows.push(['' + n + GEM_AB3.charAt(i), gemEsc(ap[i].q), gemEsc(ap[i].ans), apPts[i],
+               gemEsc(ap[i].look)]);
+  n++;
+  rows.push([n, gemEsc(d.open.q), gemEsc(d.open.ans), p.open,
+             gemEsc(d.open.look) || 'שאלה פתוחה — לעודד, לא להוריד על ניסוח']);
+  return gemKeyPage('מודל ג׳ · דף עבודה', label, rows, d.tips, extra);
+}
+
+/* ---------- עמודים ----------
+   `_fit` בבוט מכווץ בהדרגה (zoom) עד שהתוכן נכנס לתקרת העמודים.
+   אותו דבר כאן: `transform: scale` על התוכן, עם מדידה אמיתית של
+   `scrollHeight`. בלי זה התוכן נחתך ב-`overflow:hidden` ולשון
+   מקור נעלמת בשקט — זו מלכודת מתועדת כאן מ-18/11.               */
+
+function gemPageEl(){
+  var d = document.createElement('div');
+  d.setAttribute('dir', 'rtl');
+  d.className = 'gemdoc';
+  d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
+    'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
+    'padding:' + mm(14) + ' ' + mm(13) + ' ' + mm(10) + ';background:#fff';
+  return d;
+}
+
+function gemFitInto(host, html, maxPages){
+  /* מחזיר מערך עמודים. התוכן נכנס בבת אחת לעמוד אחד, ואם הוא חורג -
+     מוקטן. מעל `maxPages` עמודים התוכן נחתך לעמודים נוספים לפי גלילה,
+     ולכן התקרה נאכפת בהקטנה ולא בחיתוך.                           */
+  var scales = [1, 0.95, 0.9, 0.85, 0.8, 0.75, 0.7], s, i;
+  for(i = 0; i < scales.length; i++){
+    s = scales[i];
+    var probe = gemPageEl();
+    probe.style.height = 'auto';
+    probe.style.overflow = 'visible';
+    var inner = document.createElement('div');
+    inner.style.cssText = 'zoom:' + s;
+    inner.innerHTML = html;
+    probe.appendChild(inner);
+    host.appendChild(probe);
+    var need = Math.ceil(probe.scrollHeight / (PG_H - 1));
+    host.removeChild(probe);
+    if(need <= maxPages || i === scales.length - 1) break;
+  }
+  /* עמוד אחד שמחזיק הכול, בגובה חופשי, ומפוצל לעמודי A4 על ידי
+     חיתוך של העמוד הארוך — בדיוק מה ש-`sheetlib.render` עושה
+     עם `@page`. כאן זה נעשה בעמוד-על עם הזזת `top`.              */
+  var full = gemPageEl();
+  full.style.height = 'auto';
+  full.style.overflow = 'visible';
+  var box = document.createElement('div');
+  box.style.cssText = 'zoom:' + s;
+  box.innerHTML = html;
+  full.appendChild(box);
+  host.appendChild(full);
+  var h = full.scrollHeight;
+  host.removeChild(full);
+  var count = Math.max(1, Math.min(maxPages + 1, Math.ceil(h / (PG_H - 1))));
+  var pages = [], k;
+  for(k = 0; k < count; k++){
+    var pg = gemPageEl();
+    var win = document.createElement('div');
+    win.style.cssText = 'position:absolute;top:' + (-k * (PG_H - 1)) + 'px;right:0;left:0;' +
+      'padding:' + mm(14) + ' ' + mm(13) + ' ' + mm(10);
+    var c2 = document.createElement('div');
+    c2.style.cssText = 'zoom:' + s;
+    c2.innerHTML = html;
+    win.appendChild(c2);
+    pg.style.padding = '0';
+    pg.appendChild(win);
+    host.appendChild(pg);
+    pages.push(pg);
+  }
+  return pages;
+}
+
+var GEM_LESSON = { A: gemLessonA, B: gemLessonB, C: gemLessonC };
+var GEM_QUEST = { A: gemQuestA, B: gemQuestB, C: gemQuestC };
+
+function gemHtml(kind, model, d, part, label){
+  if(kind === 'lesson') return GEM_LESSON[model](d, part, label);
+  if(kind === 'quest') return GEM_QUEST[model](d, label);
+  return model === 'C' ? gemKeyC(d, label) : gemKeyAB(model, d, label);
+}
+
+/* `gemPages(res, which)` — עמודי מסמך אחד מתוך התוצאה של `gemRun`.
+   `which` = {part: 1..n, kind: 'lesson'|'quest'|'key'}             */
+function gemPages(res, which){
+  gemStyle(res.model);
+  var host = pdfHolder();
+  document.body.appendChild(host);
+  var it = res.items[which.part - 1];
+  var label = res.label + ' · חלק ' + it.idx + ' מתוך ' + res.total;
+  var html = gemHtml(which.kind, res.model, it.d, it.part, label);
+  var pages = gemFitInto(host, html, which.kind === 'lesson' ? 2 : 1);
+  var i;
+  for(i = 0; i < pages.length; i++) pdfBsd(pages[i]);
+  return { host: host, pages: pages };
+}
+
+/* הטקסט הנקי של כל הדף, לתצוגה ולהעתקה במסך. */
+function gemPlain(res){
+  var out = [], i, k;
+  var kinds = [['lesson', 'דף לימוד'], ['quest', 'דף שאלות'], ['key', 'מחוון לרב']];
+  for(i = 0; i < res.items.length; i++){
+    var it = res.items[i];
+    var label = res.label + ' · חלק ' + it.idx + ' מתוך ' + res.total;
+    out.push('═══ ' + label + ' · ' + GEM_MODELS[res.model] + ' ═══');
+    for(k = 0; k < kinds.length; k++){
+      var tmp = document.createElement('div');
+      tmp.innerHTML = gemHtml(kinds[k][0], res.model, it.d, it.part, label);
+      var t = (tmp.innerText || tmp.textContent || '')
+        .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+      if(t) out.push('── ' + kinds[k][1] + ' ──\n' + t);
+    }
+  }
+  return out.join('\n\n');
+}
+
+/* ==== END gem_client ==== */
+/* ==== BEGIN ped_client ==== */
+/* ===================================================================
+   🎓 תכנים פדגוגיים — הפורט של `pedagogy.py`
+   ===================================================================
+   23/11/26, בקשה מפורשת: "תשווה בין ... כפתור תכנים פדגוגיים בבוט
+   הטקסטים לבין האפליקציה החדשה. כרגע האפליקציה לא מגיעה לרמה הדרושה."
+
+   מה היה כאן, ולמה זה לא הספיק: `Code.gs` החזיק פרומפט בן **ארבע
+   שורות** ("חלק א - דף למורה: רקע מעמיק, מקורות, נקודות למיקוד,
+   קשיים צפויים, ומחוון הערכה. חלק ב - דף לתלמיד..."). כלומר:
+   · קהל אחד ולא שניים — בבוט אלה שני כפתורים, ולכל קהל תוצר שונה
+     לגמרי (למבוגרים: תקציר, מקורות עם הערות שוליים, טבלת שיטות,
+     נקודות לדיון הלכתי. לנוער: פתיח, הערות לרב, מחוון מנוקד, ודף
+     תלמיד נפרד בשפה נגישה).
+   · טקסט רץ ולא מבנה — ולכן "מחוון הערכה" יצא פסקה ולא טבלה עם
+     תשובה, מילת מפתח וניקוד.
+   · דף אחד ולא שניים — דף הרב ודף התלמיד יצאו מעורבבים במסמך אחד,
+     כלומר אי אפשר לחלק את דף התלמיד בכיתה.
+
+   הסכמות וההנחיות הן העתק מ-`pedagogy.PROMPT_ADULTS`/`PROMPT_TEENS`
+   ומ-`SYSTEM`, והמבנה (`_ok`, `_questions`) מועתק גם הוא — הוא מה
+   שמחייב את התוצר.                                               */
+
+var PED_AUDIENCES = {
+  adults: '👨‍🏫 מבוגרים ורבנים',
+  teens: '🧑‍🎓 נוער בני 14'
+};
+var PED_ONE_LINE = {
+  adults: 'מערך מעמיק: תקציר, מקורות עם הערות שוליים, טבלת שיטות ונקודות לדיון הלכתי',
+  teens: 'שני דפים: דף לרב עם מחוון מנוקד, ודף לתלמיד בשפה נגישה עם שאלות מהקל לכבד'
+};
+var PED_NAME = { adults: 'מבוגרים ורבנים', teens: 'נוער (בני 14)' };
+
+var PED_SYS = 'אתה ר"מ ותיק ומנוסה שבונה חומרי לימוד מוסמכים בבית מדרש.\n' +
+'הכול בעברית. כתוב ברור, מדויק ונעים.\n' +
+'אל תמציא מקור, ציטוט או מראה מקום שאינם בחומר שקיבלת. מקור שהחומר רק מזכיר בלי לצטט - לכתוב מה הוא אומר במילים שלך ולא כציטוט.';
+
+var PED_QUOTES = 'כל quote מועתק מילה במילה מתוך החומר שלמטה. מותר רק:\n' +
+'   (א) להשמיט באמצע ולסמן "..."; (ב) להוסיף ביאור בסוגריים עגולים ( ) מיד אחרי מילה או ביטוי קשים\n' +
+'       - תרגום ארמית, פענוח ראשי תיבות, הסבר מושג.\n' +
+'   אסור לנסח מחדש ציטוט ואסור להביא מקור שאינו בחומר. ref - מראה המקום בדיוק כפי שמופיע בחומר.\n' +
+'   אם החומר אינו תורני (כתבה, מאמר, הרצאה) - "מקור" הוא קטע מרכזי מתוכו, ו-ref הוא הכותרת או ההקשר.';
+
+var PED_PROMPT = {};
+PED_PROMPT.adults =
+'לפניך חומר בשם "{title}". בנה ממנו מערך שיעור מעמיק למבוגרים ולרבנים.\n' +
+'החזר JSON בלבד, בלי שום טקסט לפניו ואחריו.\n\n' +
+'השדות:\n' +
+'  title    - כותרת השיעור.\n' +
+'  short    - 2-4 מילים לשם הקובץ.\n' +
+'  topic    - המושגים המרכזיים, בשורה אחת.\n' +
+'  audience - שורה אחת: למי השיעור ומה אורכו (ברירת מחדל: 90 דקות, שיעור למבוגרים).\n' +
+'  abstract - תקציר הסוגיה ב-4 עד 6 משפטים: מה השאלה, למה היא מתעוררת, ולאן זה הולך.\n' +
+'  sources  - 6 עד 10 מקורות בסדר לימודי (גמרא ← ראשונים ← שו״ע ורמ״א ← אחרונים ← מסקנה).\n' +
+'             לכל מקור: level (אחד מ: gemara, rishon, psak, acharon, dec), name (שם המקור או\n' +
+'             השאלה שהוא עונה עליה), ref (מראה מקום), quote, note (משפט אחד: מה לומדים מכאן),\n' +
+'             ו-fn - מספר הערת השוליים שמתייחסת למקור הזה (אם יש), או 0.\n' +
+'  footnotes - 5 עד 10 הערות שוליים ממוספרות. לכל אחת: n (מספר, מתחיל ב-1) ו-text.\n' +
+'             הערת שוליים היא מה שרב ותיק יוסיף בשולי הדף: מקור מקביל, דיוק בלשון,\n' +
+'             מחלוקת שלא נכנסה לגוף השיעור, או הפניה לעיון נוסף. לא חזרה על גוף השיעור.\n' +
+'  plan     - מהלך השיעור, 5 עד 7 שלבים. לכל שלב: time, stage, what.\n' +
+'  shitot   - טבלת שיטות: head = ["השאלה", "המקור", "התשובה"], ו-rows - שורה לכל שלב\n' +
+'             בסוגיה, ובסוף שורת "ההכרעה".\n' +
+'  discussion - 5 עד 8 נקודות לדיון הלכתי. כל נקודה: q (השאלה לדיון) ו-both (שני הצדדים\n' +
+'             בשורה אחת, "מצד אחד... מצד שני..."). אלה שאלות שאין להן תשובה אחת בחומר\n' +
+'             - נקודות שבהן באמת נחלקים, או נפקא מינה למעשה.\n' +
+'  summary  - השורה התחתונה למעשה, 2-4 משפטים. מה שנשאר במחלוקת - לומר במפורש.\n\n' +
+'כללים:\n' +
+'1. {quotes}\n' +
+'2. "**" להדגשה בתוך כל שדה טקסט. בלי HTML ובלי מרקדאון אחר.\n' +
+'3. העומק הוא העיקר: למבוגרים לא כותבים "מה דעתכם" אלא מראים את המחלוקת ואת הנפקא מינה.\n' +
+'4. אם החומר קצר או חלקי - לבנות ממה שיש ולומר את זה ב-abstract. לא להשלים מהידע הכללי.\n' +
+'{extra}\nהחומר:\n<<<\n{text}\n>>>';
+
+PED_PROMPT.teens =
+'לפניך חומר בשם "{title}". בנה ממנו שיעור לנוער, בני 14 (כיתה ח׳).\n' +
+'צריך שני דפים: דף לרב (מערך שיעור ומחוון תשובות) ודף לתלמיד.\n' +
+'החזר JSON בלבד, בלי שום טקסט לפניו ואחריו.\n\n' +
+'השדות:\n' +
+'  title    - כותרת קליטה לבני 14.\n' +
+'  short    - 2-4 מילים לשם הקובץ.\n' +
+'  topic    - המושגים המרכזיים, בשורה אחת.\n' +
+'  audience - שורה אחת: כיתה ח׳ (בני 14) ומשך השיעור (ברירת מחדל 45 דקות).\n' +
+'  hook     - הפתיח: מקרה, שאלה או סיטואציה מהחיים של בן 14 שמביאה לנושא. 2-4 משפטים.\n' +
+'  plan     - מהלך השיעור, 5 עד 6 שלבים. לכל שלב: time, stage, what. תכליתי -\n' +
+'             בלי הצגות, בלי סימולציות ובלי משחקי תפקידים.\n' +
+'  shitot   - טבלת שיטות לרב: head = ["השאלה", "המקור", "התשובה"], rows - שורה לשלב,\n' +
+'             ובסוף "ההכרעה".\n' +
+'  teaching_notes - 4 עד 6 הערות לרב: מה בני 14 בדרך כלל לא מבינים כאן, איפה נתקעים,\n' +
+'             ואיזו דוגמה עובדת. לא חזרה על המערך.\n' +
+'  sources  - 4 עד 6 מקורות לדף התלמיד, בשפה נגישה. לכל מקור: level (gemara, rishon,\n' +
+'             psak, acharon, dec), name, ref, quote, ו-note שמתחיל ב-"🔎 ביאור:" ומסביר\n' +
+'             במשפט אחד פשוט מה כתוב כאן. הציטוטים קצרים - בן 14 לא קורא פסקה ארמית.\n' +
+'  words    - 5 עד 8 מילים קשות עם הסבר קצר ופשוט. לכל אחת: w, d.\n' +
+'  questions - 8 עד 10 שאלות **מתוך הנלמד בלבד**, מסודרות מהקל לכשה: קודם בינוני ואחר כך קשה.\n' +
+'             לכל שאלה: n (מספר), q (השאלה), level (בדיוק "בינוני" או "קשה"),\n' +
+'             src (מספר המקור שממנו עונים, או 0 אם זו שאלת חשיבה).\n' +
+'             לפחות שלוש "בינוני" ולפחות שלוש "קשה", וכל ה"בינוני" לפני ה"קשה".\n' +
+'  rubric   - מחוון תשובות לרב, שורה לכל שאלה ובאותו סדר. לכל אחת: n (מספר השאלה),\n' +
+'             answer (התשובה המלאה), key (מה חייב להופיע בתשובה כדי שתיחשב נכונה -\n' +
+'             מילה, מושג או מקור), points (מספר שלם, סך הכול 100 בכל השאלות יחד).\n\n' +
+'כללים:\n' +
+'1. {quotes}\n' +
+'2. "**" להדגשה. בלי HTML.\n' +
+'3. השפה בדף התלמיד היא של בן 14: משפטים קצרים, בלי מילים גבוהות, בלי "ולכאורה" ו"אשר".\n' +
+'   בדף לרב מותרת שפה רגילה.\n' +
+'4. שאלה "בינוני" - התשובה נמצאת במקור, צריך למצוא אותה. שאלה "קשה" - צריך לחבר שני\n' +
+'   מקורות, להסיק, או ליישם על מקרה חדש. שאלה שהתשובה שלה לא נמצאת בחומר - לא נכנסת.\n' +
+'5. אם החומר אינו תורני - אותו מבנה בדיוק, ו"מקור" הוא קטע מרכזי מתוך החומר.\n' +
+'{extra}\nהחומר:\n<<<\n{text}\n>>>';
+
+/* ---------- השער: העתק של `pedagogy._ok` ----------
+   זה מה שמחליט אם לנסות שוב, ולכן הוא מה שמחייב את התוצר. בלעדיו
+   "המודל החזיר JSON" שווה ל"דף תקין", וזה לא נכון.             */
+
+function pedList(x){ return (x instanceof Array) ? x : []; }
+
+function pedOk(d, audience){
+  if(!d || typeof d !== 'object') return false;
+  if(!d.title || !pedList(d.sources).length || !pedList(d.plan).length) return false;
+  if(pedList(d.sources).length < 3) return false;
+  if(audience === 'teens')
+    return pedList(d.questions).length >= 5 && pedList(d.rubric).length >= 3 && !!d.hook;
+  return !!d.abstract && !!d.summary && pedList(d.discussion).length >= 2;
+}
+
+function pedProblems(d, audience){
+  var bad = [];
+  if(pedList(d.sources).length < (audience === 'teens' ? 4 : 6))
+    bad.push('יש רק ' + pedList(d.sources).length + ' מקורות.');
+  if(audience === 'teens'){
+    if(pedList(d.questions).length < 8) bad.push('פחות מ-8 שאלות.');
+    if(pedList(d.words).length < 5) bad.push('פחות מ-5 מילים קשות.');
+    if(pedList(d.teaching_notes).length < 4) bad.push('פחות מ-4 הערות לרב.');
+  } else {
+    if(pedList(d.footnotes).length < 5) bad.push('פחות מ-5 הערות שוליים.');
+    if(pedList(d.discussion).length < 5) bad.push('פחות מ-5 נקודות לדיון.');
+  }
+  return bad;
+}
+
+/* השאלות מסודרות בינוני ← קשה **בקוד ולא בבקשה מהמודל**: ההנחיה
+   אומרת "כל הבינוני לפני הקשה", ומודל חינמי מערבב אותן בפועל.
+   מיון יציב משמר את סדר המודל בתוך כל דרגה. העתק של `_questions`. */
+function pedQuestions(d){
+  var qs = [], i;
+  var src = pedList(d.questions);
+  for(i = 0; i < src.length; i++)
+    if(src[i] && typeof src[i] === 'object' && src[i].q)
+      qs.push({ q: src[i], hard: String(src[i].level || '').replace(/^\s+|\s+$/g, '') === 'קשה' ? 1 : 0, i: i });
+  qs.sort(function(a, b){ return (a.hard - b.hard) || (a.i - b.i); });
+  var out = [];
+  for(i = 0; i < qs.length; i++) out.push(qs[i].q);
+  return out;
+}
+
+/* ---------- ההרצה ---------- */
+
+function pedRun(keys, body, audience, extra, title, say, token){
+  var base = PED_PROMPT[audience]
+    .replace('{title}', title || 'החומר')
+    .replace('{quotes}', PED_QUOTES)
+    .replace('{extra}', extra ? ('\nהנחיה נוספת מהמשתמש: ' + extra + '\n') : '')
+    .replace('{text}', body);
+  var prompt = base;
+  function attempt(k){
+    jobCheck(token);
+    if(say) say(k === 1 ? ('בונה תכנים פדגוגיים ל' + PED_NAME[audience] + '…')
+                        : 'משלים את מה שחסר…');
+    return askOne(keys, PED_SYS, prompt).then(function(r){
+      jobCheck(token);
+      var d = r && r.text ? gemJson(r.text) : null;
+      if(pedOk(d, audience)){
+        var bad = pedProblems(d, audience);
+        if(!bad.length || k === 2) return { d: d, audience: audience, via: r.via, gaps: bad };
+        prompt = base + '\n\n(בתשובה הקודמת: ' + bad.join(' ') + ' תקן והחזר JSON שלם מחדש.)';
+        return attempt(k + 1);
+      }
+      if(k < 2){
+        prompt = base + '\n\n(התשובה הקודמת לא הייתה JSON תקין במבנה שהתבקש. החזר JSON תקין בלבד.)';
+        return attempt(k + 1);
+      }
+      return null;
+    });
+  }
+  return attempt(1);
+}
+
+/* ===================================================================
+   העיצוב — אותו מבנה דפים של `pedagogy.render_*`
+   =================================================================== */
+
+var PED_CSS =
+'.peddoc { font-family: "Gisha","Arial",sans-serif; font-size: 11.4pt; line-height: 1.5; color: #241a10; direction: rtl; text-align: right }\n' +
+'.peddoc h1 { font-size: 20pt; color: #5a2d0c; margin: 0 0 1.5mm }\n' +
+'.peddoc .bs { font-size: 9.5pt; color: #8a6d4a; margin-bottom: 1mm }\n' +
+'.peddoc .sub { font-size: 10pt; color: #6b5a44; margin-bottom: 3mm; line-height: 1.45 }\n' +
+'.peddoc .box { border: 1px solid #d8c6ae; background: #fcf8f2; border-radius: 2mm; padding: 2.2mm 3.5mm; margin: 2mm 0 3mm; font-size: 11pt }\n' +
+'.peddoc .bt { display: block; font-weight: bold; color: #7a3e12; font-size: 10.4pt; margin-bottom: 1mm }\n' +
+'.peddoc .abs { display: block }\n' +
+'.peddoc .box ul { margin: 1mm 0 0; padding-right: 5mm }\n' +
+'.peddoc .box li { margin-bottom: .6mm }\n' +
+'.peddoc table.t { width: 100%; border-collapse: collapse; margin: 1.5mm 0 3mm; font-size: 10.4pt; line-height: 1.32 }\n' +
+'.peddoc table.t th { background: #5a2d0c; color: #fff; padding: 1.2mm 1.8mm; font-weight: bold; text-align: right }\n' +
+'.peddoc table.t td { border: 1px solid #d8c6ae; padding: 1.1mm 1.8mm; vertical-align: top }\n' +
+'.peddoc table.t.b th { background: #3b4f8a }\n' +
+'.peddoc table.t.r th { background: #4f6b3a }\n' +
+'.peddoc .siman { border-top: 2px solid #5a2d0c; margin: 3.5mm 0 2mm; padding-top: 1.2mm }\n' +
+'.peddoc .siman .t1 { font-weight: bold; color: #5a2d0c; font-size: 12.6pt }\n' +
+'.peddoc .siman .t2 { font-size: 9.4pt; color: #8a6d4a }\n' +
+'.peddoc h3 { font-size: 11.4pt; margin: 2.4mm 0 1mm; color: #3b2a18 }\n' +
+'.peddoc h3 .src { font-size: 9.6pt; color: #8a6d4a; font-weight: normal }\n' +
+'.peddoc h3.tur { color: #2f6f73 } .peddoc h3.by { color: #5a3a6e }\n' +
+'.peddoc h3.sa { color: #8c2f39 } .peddoc h3.nk { color: #7a3e12 }\n' +
+'.peddoc h3.dc { color: #4f6b3a }\n' +
+'.peddoc .srow { display: flex; gap: 2.5mm; margin-bottom: 1.6mm }\n' +
+'.peddoc .lbl { flex: none; width: 24mm; font-size: 9.4pt; font-weight: bold; color: #fff; border-radius: 1mm; padding: .6mm 1.4mm; height: fit-content; text-align: center }\n' +
+'.peddoc .l-tur { background: #2f6f73 } .peddoc .l-src { background: #5a3a6e }\n' +
+'.peddoc .l-sa { background: #8c2f39 } .peddoc .l-nk { background: #7a3e12 }\n' +
+'.peddoc .l-dec { background: #4f6b3a }\n' +
+'.peddoc .srow p { margin: 0 0 .6mm; font-family: "David","Times New Roman",serif; font-size: 11.8pt; line-height: 1.45 }\n' +
+'.peddoc .note { font-size: 10.2pt; color: #5b5b5b; margin: 0 }\n' +
+'.peddoc .fn { font-size: 10.6pt; color: #5b5b5b; line-height: 1.3; border-top: 1px solid #d8c6ae; margin-top: 3mm; padding-top: 1.5mm }\n' +
+'.peddoc .fn ol { margin: 0; padding-right: 5mm }\n' +
+'.peddoc .fn li { margin-bottom: .5mm }\n' +
+'.peddoc sup.fn-ref { font-size: 8.5pt; color: #7a3e12; font-weight: bold }\n' +
+'.peddoc .disc { margin: 0 0 1.4mm }\n' +
+'.peddoc .disc .dq { font-weight: bold; color: #3b4f8a }\n' +
+'.peddoc .disc .db { color: #5b5b5b; font-size: 11.6pt }\n' +
+'.peddoc .lv { font-size: 9.3pt; font-weight: bold; border-radius: 1mm; padding: .2mm 1.3mm; color: #fff; margin: 0 1.5mm }\n' +
+'.peddoc .lv-m { background: #b5762f } .peddoc .lv-h { background: #8c2f39 }\n' +
+'.peddoc ol.q { padding-right: 6mm; margin: 1.5mm 0 }\n' +
+'.peddoc ol.q li { margin-bottom: 2.4mm; line-height: 1.7 }\n' +
+'.peddoc .approx { font-size: 9pt; color: #8c2f39 }\n';
+
+var _pedStyled = false;
+function pedStyle(){
+  if(_pedStyled) return;
+  var s = document.createElement('style');
+  s.id = 'pedCss';
+  s.textContent = PED_CSS;
+  document.head.appendChild(s);
+  _pedStyled = true;
+}
+
+/* טקסט של המודל ← HTML: escape ואז "**מודגש**". העתק של `psak_lesson._m`. */
+function pedM(s){
+  var t = String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return t.replace(/\*\*([\s\S]+?)\*\*/g, '<b>$1</b>').replace(/\*\*/g, '');
+}
+
+var PED_LEVEL = { gemara: ['tur', 'l-tur'], rishon: ['by', 'l-src'], psak: ['sa', 'l-sa'],
+                  acharon: ['nk', 'l-nk'], dec: ['dc', 'l-dec'] };
+var PED_LV = { 'קשה': ['lv-h', 'קשה'], 'בינוני': ['lv-m', 'בינוני'] };
+
+function pedPlanTable(d){
+  var rows = '', i, p = pedList(d.plan);
+  for(i = 0; i < p.length; i++){
+    if(!p[i] || typeof p[i] !== 'object') continue;
+    rows += '<tr><td>' + pedM(p[i].time) + '</td><td>' + pedM(p[i].stage) + '</td><td>' +
+            pedM(p[i].what) + '</td></tr>';
+  }
+  if(!rows) return '';
+  return '<table class="t"><tr><th style="width:12%">זמן</th><th style="width:19%">שלב</th>' +
+         '<th>מה עושים</th></tr>' + rows + '</table>';
+}
+
+function pedShitotTable(d){
+  var sh = d.shitot || {}, rows = '', i, j;
+  var rl = pedList(sh.rows);
+  for(i = 0; i < rl.length; i++){
+    if(!(rl[i] instanceof Array)) continue;
+    rows += '<tr>';
+    for(j = 0; j < rl[i].length; j++) rows += '<td>' + pedM(rl[i][j]) + '</td>';
+    rows += '</tr>';
+  }
+  if(!rows) return '';
+  var hd = pedList(sh.head).length ? sh.head : ['השאלה', 'המקור', 'התשובה'], head = '';
+  for(i = 0; i < hd.length; i++) head += '<th>' + pedM(hd[i]) + '</th>';
+  return '<table class="t b"><tr>' + head + '</tr>' + rows + '</table>';
+}
+
+function pedSources(d, withFn){
+  var out = '', sl = pedList(d.sources), i;
+  for(i = 0; i < sl.length; i++){
+    var s = sl[i];
+    if(!s || typeof s !== 'object') continue;
+    var lv = PED_LEVEL[s.level] || ['by', 'l-src'];
+    var fn = '';
+    if(withFn){
+      var num = parseInt(s.fn, 10);
+      if(num > 0) fn = '<sup class="fn-ref">[' + num + ']</sup>';
+    }
+    out += '<h3 class="' + lv[0] + '">מקור ' + (i + 1) + ' · ' + pedM(s.name) + fn +
+           ' <span class="src">' + pedM(s.ref) + '</span></h3>';
+    var quote = String(s.quote == null ? '' : s.quote).replace(/^\s+|\s+$/g, '');
+    var note = s.note ? '<p class="note">' + pedM(s.note) + '</p>' : '';
+    var label = pedM(s.label || s.name);
+    if(quote)
+      out += '<div class="srow"><div class="lbl ' + lv[1] + '">' + label + '</div>' +
+             '<div><p>"' + pedM(quote) + '"</p>' + note + '</div></div>';
+    else if(note)
+      out += '<div class="srow"><div class="lbl ' + lv[1] + '">' + label + '</div><div>' +
+             note + '</div></div>';
+  }
+  return out;
+}
+
+function pedFootnotes(d){
+  var items = '', fl = pedList(d.footnotes), i, n = 0;
+  for(i = 0; i < fl.length; i++){
+    if(!fl[i] || typeof fl[i] !== 'object' || !fl[i].text) continue;
+    n++;
+    items += '<li value="' + (parseInt(fl[i].n, 10) || n) + '">' + pedM(fl[i].text) + '</li>';
+  }
+  if(!items) return '';
+  return '<div class="fn"><b>הערות שוליים</b><ol>' + items + '</ol></div>';
+}
+
+function pedCredit(srcTitle){
+  return '<div class="box"><span class="bt">📚 מהיכן החומר</span>"' + pedM(srcTitle) +
+         '". הציטוטים מועתקים מהחומר שנמסר; כדאי לעבור עליהם במקור לפני השיעור.</div>';
+}
+
+function pedAdultsHtml(d, srcTitle){
+  var disc = '', dl = pedList(d.discussion), i;
+  for(i = 0; i < dl.length; i++){
+    if(!dl[i] || typeof dl[i] !== 'object' || !dl[i].q) continue;
+    disc += '<p class="disc"><span class="dq">' + pedM(dl[i].q) + '</span><br>' +
+            '<span class="db">' + pedM(dl[i].both) + '</span></p>';
+  }
+  return '<div class="bs"><b>מערך שיעור · למבוגרים ולרבנים</b></div>' +
+    '<h1>' + pedM(d.title) + '</h1>' +
+    '<div class="sub">' + pedM(d.audience || 'שיעור למבוגרים · 90 דקות') + ' · ' +
+    pedM(d.topic) + '<br>על פי "' + pedM(srcTitle) + '"</div>' +
+    '<div class="box"><span class="bt">📌 תקציר הסוגיה</span><span class="abs">' +
+    pedM(d.abstract) + '</span></div>' +
+    pedPlanTable(d) +
+    '<div class="siman"><div class="t1">📜 המקורות</div><div class="t2">בסדר לימודי · מראי מקום כלשונם</div></div>' +
+    pedSources(d, true) + pedFootnotes(d) +
+    '<div class="siman"><div class="t1">🧭 טבלת השיטות</div><div class="t2">מהשאלה אל ההכרעה</div></div>' +
+    pedShitotTable(d) +
+    (disc ? '<div class="siman"><div class="t1">💬 נקודות לדיון הלכתי</div>' +
+            '<div class="t2">מה שבאמת נחלקו בו, ונפקא מינה למעשה</div></div>' + disc : '') +
+    '<div class="box"><span class="bt">⚖️ השורה התחתונה</span>' + pedM(d.summary) + '</div>' +
+    pedCredit(srcTitle);
+}
+
+function pedTeensTeacherHtml(d, srcTitle){
+  var notes = '', nl = pedList(d.teaching_notes), i;
+  for(i = 0; i < nl.length; i++) if(nl[i]) notes += '<li>' + pedM(nl[i]) + '</li>';
+  var byN = {}, rl = pedList(d.rubric);
+  for(i = 0; i < rl.length; i++) if(rl[i] && typeof rl[i] === 'object') byN[String(rl[i].n)] = rl[i];
+  var qs = pedQuestions(d), rows = '';
+  for(i = 0; i < qs.length; i++){
+    var r = byN[String(qs[i].n)] || {};
+    var lv = PED_LV[String(qs[i].level || '').replace(/^\s+|\s+$/g, '')] || ['lv-m', 'בינוני'];
+    var pts = (r.points === null || r.points === undefined || r.points === '') ? '—' : pedM(r.points);
+    rows += '<tr><td>' + (i + 1) + '</td><td>' + pedM(qs[i].q) + ' <span class="lv ' + lv[0] +
+            '">' + lv[1] + '</span></td><td>' + pedM(r.answer) + '</td><td>' + pedM(r.key) +
+            '</td><td>' + pts + '</td></tr>';
+  }
+  var rubric = rows
+    ? '<table class="t r"><tr><th style="width:5%">#</th><th style="width:28%">השאלה</th>' +
+      '<th>התשובה</th><th style="width:20%">מה חייב להופיע</th>' +
+      '<th style="width:7%">ניקוד</th></tr>' + rows + '</table>'
+    : '';
+  return '<div class="bs"><b>לרב</b> · נוער, בני 14</div>' +
+    '<h1>' + pedM(d.title) + '</h1>' +
+    '<div class="sub">' + pedM(d.audience || 'כיתה ח׳ (בני 14) · 45 דקות') + ' · ' +
+    pedM(d.topic) + '<br>על פי "' + pedM(srcTitle) + '"</div>' +
+    '<div class="box"><span class="bt">🎯 הפתיח</span>' + pedM(d.hook) + '</div>' +
+    pedPlanTable(d) +
+    (notes ? '<div class="box"><span class="bt">💡 הערות לרב - איפה הם נתקעים</span><ul>' +
+             notes + '</ul></div>' : '') +
+    '<div class="siman"><div class="t1">🧭 מהלך הסוגיה</div><div class="t2">' +
+    pedM(d.topic) + '</div></div>' + pedShitotTable(d) +
+    '<div class="siman"><div class="t1">✅ מחוון התשובות</div>' +
+    '<div class="t2">תשובה מלאה · מה חייב להופיע · ניקוד</div></div>' + rubric +
+    pedCredit(srcTitle);
+}
+
+function pedTeensStudentHtml(d, srcTitle){
+  var out = '<div class="siman"><div class="t1">📜 ' + pedM(d.short || d.title) + '</div>' +
+    '<div class="t2">שם: ____________________ · כיתה: ______ · ביאור בסוגריים</div></div>' +
+    '<div class="box"><span class="bt">🎯 נתחיל מכאן</span>' + pedM(d.hook) + '</div>' +
+    pedSources(d, false);
+  var words = '', wl = pedList(d.words), i;
+  for(i = 0; i < wl.length; i++)
+    if(wl[i] && typeof wl[i] === 'object' && wl[i].w)
+      words += '<li><b>' + pedM(wl[i].w) + '</b> – ' + pedM(wl[i].d) + '</li>';
+  if(words) out += '<div class="box"><span class="bt">📖 מילים קשות</span><ul>' + words + '</ul></div>';
+  var qs = pedQuestions(d), items = '';
+  for(i = 0; i < qs.length; i++){
+    var lv = PED_LV[String(qs[i].level || '').replace(/^\s+|\s+$/g, '')] || ['lv-m', 'בינוני'];
+    var sn = parseInt(qs[i].src, 10);
+    var src = (sn > 0) ? ' <span class="src">(מקור ' + sn + ')</span>' : '';
+    items += '<li>' + pedM(qs[i].q) + '<span class="lv ' + lv[0] + '">' + lv[1] + '</span>' +
+             src + '<br>________________________________________________</li>';
+  }
+  if(items)
+    out += '<div class="siman"><div class="t1">✏️ שאלות</div>' +
+           '<div class="t2">מהבינוני לקשה · ענו בקצרה וציינו מקור</div></div>' +
+           '<ol class="q">' + items + '</ol>';
+  return out;
+}
+
+/* ---------- עמודים ---------- */
+
+function pedPageEl(){
+  var d = document.createElement('div');
+  d.setAttribute('dir', 'rtl');
+  d.className = 'peddoc';
+  d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
+    'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
+    'padding:' + mm(16) + ' ' + mm(15) + ' ' + mm(16) + ';background:#fff';
+  return d;
+}
+
+/* הדפים כאן יכולים להיות ארוכים (מערך למבוגרים עם 10 מקורות), ולכן
+   אין תקרת עמודים: התוכן נשפך לכמה עמודי A4 לפי גובהו, כמו ב-
+   `pedagogy._to_pdf` עם `max_pages` גבוה. חיתוך של תוכן אמיתי כדי
+   לעמוד בתקרה הוא מחיקה שקטה, והוא אסור כאן.                    */
+function pedPagesOf(host, html, maxPages){
+  var probe = pedPageEl();
+  probe.style.height = 'auto';
+  probe.style.overflow = 'visible';
+  probe.innerHTML = html;
+  host.appendChild(probe);
+  var h = probe.scrollHeight;
+  host.removeChild(probe);
+  var count = Math.max(1, Math.min(maxPages, Math.ceil(h / (PG_H - 1)))), pages = [], k;
+  for(k = 0; k < count; k++){
+    var pg = pedPageEl();
+    pg.style.padding = '0';
+    var win = document.createElement('div');
+    win.style.cssText = 'position:absolute;top:' + (-k * (PG_H - 1)) + 'px;right:0;left:0;' +
+      'padding:' + mm(16) + ' ' + mm(15) + ' ' + mm(16);
+    win.innerHTML = html;
+    pg.appendChild(win);
+    host.appendChild(pg);
+    pdfBsd(pg);
+    pages.push(pg);
+  }
+  return pages;
+}
+
+/* `pedDocs(res)` — רשימת המסמכים: [{key, name, html}] */
+function pedDocs(res){
+  var d = res.d, t = String(d.title || 'שיעור');
+  if(res.audience === 'teens') return [
+    { key: 'teacher', name: t + ' - לרב ומחוון', html: pedTeensTeacherHtml(d, res.srcTitle) },
+    { key: 'student', name: t + ' - דף לתלמיד', html: pedTeensStudentHtml(d, res.srcTitle) }
+  ];
+  return [{ key: 'lesson', name: t + ' - מערך שיעור', html: pedAdultsHtml(d, res.srcTitle) }];
+}
+
+function pedPages(res, key){
+  pedStyle();
+  var host = pdfHolder();
+  document.body.appendChild(host);
+  var docs = pedDocs(res), i, html = '';
+  for(i = 0; i < docs.length; i++) if(docs[i].key === key) html = docs[i].html;
+  return { host: host, pages: pedPagesOf(host, html, 8) };
+}
+
+function pedPlain(res){
+  pedStyle();
+  var docs = pedDocs(res), out = [], i;
+  for(i = 0; i < docs.length; i++){
+    var tmp = document.createElement('div');
+    tmp.className = 'peddoc';
+    tmp.innerHTML = docs[i].html;
+    var t = (tmp.innerText || tmp.textContent || '')
+      .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+    out.push('═══ ' + docs[i].name + ' ═══\n' + t);
+  }
+  return out.join('\n\n');
+}
+
+/* ==== END ped_client ==== */
 /* ---------- הרצה ---------- */
 /* ---------- ביטול (18/11/26) ----------
    הבקשה: "כפתור ביטול שמבטל כל פעילות ומאפשר לי לבחור בכפתור אחר".
@@ -4613,6 +6320,48 @@ $('go').onclick = function(){
       });
     }
 
+    /* ---------- 📖 דף לימוד בגמרא: שלושה מסלולים, JSON מובנה (23/11/26) ----------
+       בבוט זה `gemara_sheet.py`: הנוסח והביאור של שטיינזלץ מגיעים
+       מספריא, העמוד מתפצל לשלושה חלקי לימוד, והמודל **מפנה** למקור
+       במספרי מקטעים ואינו מעתיק אותו. כאן היה פרומפט חופשי שביקש
+       "לשון הגמרא בקירוב" - כלומר המודל מעתיק, ולכן יכול לשנות את
+       לשון הגמרא. ראה `gem_client.js`. */
+    if(ticket.mode === 'gemara'){
+      var gd = parseDaf(raw);
+      if(!gd) throw new Error('כתוב מסכת, דף ועמוד ואביא את הנוסח והביאור מספריא. ' +
+        'למשל: "מגילה ב ע״א" · "בבא מציעא כט ע״ב" · "ברכות ה:".');
+      return gemFetchPage(gd.en || gd.ref.split('.')[0], gd.daf, gd.side, say)
+        .then(function(segs){
+          jobCheck(token);
+          var lbl = gd.he + ' ' + hnum(gd.daf) + ' ' + (gd.side === 'a' ? 'ע״א' : 'ע״ב');
+          return gemRun(tkeys(ticket), segs, GEM_PICKED, lbl, say, token);
+        }).then(function(res){
+          if(!res) return null;
+          return { richKind: 'gemara', gem: res,
+                   name: res.label + ' - ' + GEM_MODELS[res.model],
+                   via: (res.via || '') + ' · הנוסח והביאור מספריא' };
+        });
+    }
+
+    /* ---------- 🎓 תכנים פדגוגיים: שני קהלים, JSON מובנה (23/11/26) ----------
+       בבוט זה `pedagogy.py`: שני כפתורי קהל, ולכל קהל תוצר אחר -
+       למבוגרים מערך עם הערות שוליים ודיון הלכתי, ולנוער דף לרב עם
+       מחוון מנוקד **ודף תלמיד נפרד**. כאן היה פרומפט אחד בן ארבע
+       שורות שהחזיר שני "חלקים" בתוך מסמך אחד. ראה `ped_client.js`. */
+    if(ticket.mode === 'pedagogy'){
+      if(!srcNote && body.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').length < 300)
+        throw new Error('לא הצלחתי להביא חומר לשיעור - מה ששלחת הוא שורת בקשה ולא חומר. ' +
+          'כתוב מראה מקום שאביא מספריא, הדבק קישור, או הדבק את החומר עצמו.');
+      return pedRun(tkeys(ticket), body, PED_PICKED, extra,
+                    (raw || '').split('\n')[0].substring(0, 60) || 'החומר', say, token)
+        .then(function(res){
+          if(!res) return null;
+          res.srcTitle = (raw || '').split('\n')[0].substring(0, 60) || 'החומר שנמסר';
+          return { richKind: 'pedagogy', ped: res,
+                   name: String(res.d.title || 'תכנים פדגוגיים'), via: res.via };
+        });
+    }
+
     /* מצב רב-עמודי (מערך שיעור): עמוד בכל פנייה. רק כשהחומר נכנס
        בפנייה אחת - חומר שחורג מפוצל ממילא ב-`askLong`, ופיצול כפול
        היה מכפיל את מספר הפניות ושורף את המכסה. */
@@ -4629,21 +6378,56 @@ $('go').onclick = function(){
        האלמנטים לתוך העמודים ומפצל פסקאות ארוכות במקום. לחיצה שנייה
        על "הורד PDF" על אותם אלמנטים הייתה מפיקה מסמך פגום. */
     if(r && r.richKind){
-      var build = (r.richKind === 'sheet')
-        ? function(){ return sheetDoc(r.sheet, r.sheet.missing || [], r.raw); }
-        : function(){ return halDoc(r.meta, r.units); };
-      var plain = richText(build());
+      /* 23/11/26 — דף גמרא ותכנים פדגוגיים מפיקים **כמה מסמכים** ולא
+         אחד: בגמרא שלושה לכל חלק (לימוד/שאלות/מחוון), ובנוער שניים
+         (לרב ולתלמיד). כפתור הורדה אחד היה מוריד רק את הראשון, כלומר
+         דף השאלות והמחוון היו נכתבים ולא מגיעים למשתמש - בדיוק
+         ה"לא מגיע לרמה הדרושה". לכן יש כאן רשימת כפתורים. */
+      var docs = null, build = null, plain = '';
+      if(r.richKind === 'gemara'){
+        docs = [];
+        var gi, gk, GK = [['lesson', 'דף לימוד'], ['quest', 'דף שאלות'], ['key', 'מחוון לרב']];
+        for(gi = 0; gi < r.gem.items.length; gi++)
+          for(gk = 0; gk < GK.length; gk++)
+            docs.push({ label: (r.gem.items.length > 1 ? 'חלק ' + r.gem.items[gi].idx + ' · ' : '') +
+                          GK[gk][1],
+                        name: r.gem.label + ' חלק ' + r.gem.items[gi].idx + ' - ' +
+                          GK[gk][1] + ' - ' + GEM_MODELS[r.gem.model],
+                        pages: (function(p, k){ return function(){
+                          return gemPages(r.gem, { part: p, kind: k }); }; })(r.gem.items[gi].idx, GK[gk][0]) });
+        plain = gemPlain(r.gem);
+      } else if(r.richKind === 'pedagogy'){
+        docs = [];
+        var pl = pedDocs(r.ped), pi;
+        for(pi = 0; pi < pl.length; pi++)
+          docs.push({ label: pl[pi].key === 'student' ? 'דף לתלמיד'
+                        : (pl[pi].key === 'teacher' ? 'דף לרב + מחוון' : 'מערך השיעור'),
+                      name: pl[pi].name,
+                      pages: (function(k){ return function(){ return pedPages(r.ped, k); }; })(pl[pi].key) });
+        plain = pedPlain(r.ped);
+      } else {
+        build = (r.richKind === 'sheet')
+          ? function(){ return sheetDoc(r.sheet, r.sheet.missing || [], r.raw); }
+          : function(){ return halDoc(r.meta, r.units); };
+        plain = richText(build());
+      }
       JOB = null;
       S.last = plain;
       call({api:'done', token:S.token, mode:ticket.mode, via:r.via});
       var mm2 = S.modes.filter(function(x){ return x.key===ticket.mode; })[0] || {label:''};
+      var dlBtns = '<button class="mini" id="pdf">הורד PDF</button>';
+      if(docs){
+        dlBtns = '';
+        for(var dj = 0; dj < docs.length; dj++)
+          dlBtns += '<button class="mini" data-dl="' + dj + '">⬇ ' + esc(docs[dj].label) + '</button>';
+      }
       $('resultBox').innerHTML =
         '<div class="result"><div class="meta noprint">' +
         '<span class="pill">'+esc(mm2.label)+'</span>' +
         '<span>'+esc(r.via || '')+'</span>' +
         '<span class="spacer" style="flex:1"></span>' +
         '<button class="mini" id="cp">העתק</button>' +
-        '<button class="mini" id="pdf">הורד PDF</button>' +
+        dlBtns +
         '</div><div class="out" id="outTxt"></div>' +
         '<div class="noprint" id="nextBox"></div></div>';
       $('outTxt').textContent = plain;
@@ -4653,10 +6437,21 @@ $('go').onclick = function(){
           setTimeout(function(){ $('cp').textContent='העתק'; }, 1600);
         });
       };
-      $('pdf').onclick = function(){
-        savePdfRich(uniqName(r.name || mm2.label), build(), $('pdf'), null)
-          .catch(function(){ note('err','bad','לא הצלחתי להפיק את הקובץ. נסה שוב.'); });
-      };
+      if(docs){
+        Array.prototype.forEach.call($('resultBox').querySelectorAll('[data-dl]'), function(b){
+          b.onclick = function(){
+            var doc = docs[parseInt(b.getAttribute('data-dl'), 10)];
+            loadScript(CDN.html2pdf).then(function(){
+              return savePdfPages(uniqName(doc.name), doc.pages(), b, null);
+            })['catch'](function(){ note('err','bad','לא הצלחתי להפיק את הקובץ. נסה שוב.'); });
+          };
+        });
+      } else {
+        $('pdf').onclick = function(){
+          savePdfRich(uniqName(r.name || mm2.label), build(), $('pdf'), null)
+            .catch(function(){ note('err','bad','לא הצלחתי להפיק את הקובץ. נסה שוב.'); });
+        };
+      }
       drawNext(mm2, raw);
       $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
       return;
