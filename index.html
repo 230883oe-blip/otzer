@@ -627,6 +627,41 @@ function readLink(url){
   return tryOne();
 }
 
+/* ===================================================================
+   שם קובץ ייחודי לכל הורדה.                        (23/11/26, בקשה)
+
+   התלונה: "כשאני מוריד מערך שיעור שוב ושוב, שם הקובץ נשאר אותו שם
+   והמחשב שואל אם להחליף". זה היה נכון בכל מסלולי ההורדה כאן — השם
+   נבנה מהכותרת בלבד (`ttl + '.pdf'`), ולכן שתי הפקות של אותו שיעור
+   ייצרו בדיוק אותו שם.
+
+   הפתרון: תאריך + מונה רץ שנשמר ב-localStorage לפי שם הבסיס, ולכן
+   הוא עולה גם בתוך אותו יום ואפילו באותה דקה. נקודתיים אסורות בשם
+   קובץ בווינדוס, ולכן השעה **אינה** נכנסת לשם — המונה מחליף אותה.
+
+   מלכודת שנשמרה: localStorage נחסם בגלישה פרטית ובתוך דפדפן מוטמע
+   (וואטסאפ/טלגרם) וזורק שגיאה. במקרה כזה נופלים לשעה+דקה כמספר,
+   שגם היא מבדילה בין הורדה להורדה.                                 */
+var DLNUM_LS = 'ta_dlnum';
+function uniqName(base){
+  var raw = String(base == null ? '' : base), ext = '.pdf';
+  var m = raw.match(/\.[A-Za-z0-9]{2,4}$/);
+  if(m){ ext = m[0]; raw = raw.slice(0, raw.length - ext.length); }
+  var b = raw.replace(/[\\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ')
+             .trim().substring(0, 60).trim() || 'מסמך';
+  var n = 0;
+  try {
+    var map = JSON.parse(localStorage.getItem(DLNUM_LS) || '{}') || {};
+    n = (parseInt(map[b], 10) || 0) + 1;
+    map[b] = n;
+    localStorage.setItem(DLNUM_LS, JSON.stringify(map));
+  } catch(e){ n = 0; }
+  var d = new Date(), p2 = function(x){ return (x < 10 ? '0' : '') + x; };
+  if(!n) n = d.getHours() * 100 + d.getMinutes();   /* גיבוי בלי זיכרון */
+  return b + ' - ' + p2(d.getDate()) + '.' + p2(d.getMonth() + 1) + '.' +
+         d.getFullYear() + ' (' + n + ')' + ext;
+}
+
 /* ==== BEGIN sef_client ==== */
 /* ===================================================================
    ספריא — הבאת המקור האמיתי, בדפדפן של המשתמש.   (15/11/26)
@@ -1660,7 +1695,7 @@ function savePdf(title, body, btn){
   var old = btn ? btn.textContent : '';
   if(btn){ btn.textContent = 'מכין…'; btn.disabled = true; }
   var ttl = title || 'עוזר הכתיבה';
-  var name = ttl.replace(/[\\\/:*?"<>|]/g, ' ').substring(0, 60) + '.pdf';
+  var name = uniqName(ttl);
 
   function done(){
     pdfCleanup();
@@ -2439,9 +2474,7 @@ function drawLuz(d){
     function done(){ pdfCleanup(); bt.textContent = old; bt.disabled = false; }
     loadScript(CDN.html2pdf).then(function(){
       /* pdfSaveOne ולא save(): נמדד שהלוח יצא בשני עמודים, והשני ריק. */
-      return pdfSaveOne(page,
-        ((d.title || 'לוח זמנים').replace(/[\\\/:*?"<>|]/g,' ').substring(0,50)) + '.pdf'
-      ).then(done);
+      return pdfSaveOne(page, uniqName(d.title || 'לוח זמנים')).then(done);
     }).catch(function(){ done(); window.print(); });
   };
   $('resultBox').scrollIntoView({behavior:'smooth', block:'start'});
@@ -2913,7 +2946,7 @@ function scanDocs(files, say){
     });
   }
   return loadScript(CDN.html2pdf).then(step).then(function(){
-    return pdfFromImages(urls, 'סריקה.pdf', false).then(function(){
+    return pdfFromImages(urls, uniqName('סריקה'), false).then(function(){
       return { pages: urls.length };
     });
   });
@@ -2978,8 +3011,8 @@ function squeezePdf(file, per, say){
     }
     newSheet();
     return step().then(function(){
-      var name = ((file.name || 'מסמך').replace(/\.pdf$/i, '')) +
-                 ' - דחוס.pdf';
+      var name = uniqName(((file.name || 'מסמך').replace(/\.pdf$/i, '')) +
+                          ' - דחוס');
       return pdfFromImages(urls, name, land).then(function(){
         return { src: n, out: urls.length, per: per };
       });
@@ -4592,7 +4625,7 @@ $('go').onclick = function(){
         });
       };
       $('pdf').onclick = function(){
-        savePdfRich((r.name || mm2.label) + '.pdf', build(), $('pdf'), null)
+        savePdfRich(uniqName(r.name || mm2.label), build(), $('pdf'), null)
           .catch(function(){ note('err','bad','לא הצלחתי להפיק את הקובץ. נסה שוב.'); });
       };
       drawNext(mm2, raw);
