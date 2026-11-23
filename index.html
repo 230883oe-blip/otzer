@@ -3789,16 +3789,43 @@ function halRow(row, main){
   wrap.appendChild(lbl);
   var body;
   if(kind === 'nk'){
-    body = el('div', 'flex:1 1 auto;font-size:' + pt(12.4));
-    var ul = el('ul', 'list-style:none;padding:0;margin:0'), i;
+    /* 23/11/26, התלונה: "לחצתי על הסיכום ההלכתי בהרחבה וכל נושאי
+       הכלים יצא לי ריק (לעומת זאת מערך שיעור הביא את כולם)".
+
+       השורש, והוא כתוב במפורש בתיעוד של שער נושאי הכלים מ-22/11:
+       **באפליקציה המודל כותב את נושאי הכלים בתוך `html` של שורת nk
+       אחת** (`<ul><li><b>ט״ז (ס״ק י״א):</b> …`), ולא בשדה המובנה
+       `who` כמו בבוט. ב-22/11 נמדד בדיוק זה ותוקן ה**שער**
+       (`nkFromHtml`) כדי שלא ידווח חוסר שקרי — והציור כאן נשאר
+       קורא `who` בלבד. התוצאה הגרועה משתיהן: השער ראה את ה-html
+       ואישר "כל נושאי הכלים כאן", וגם ספירת התווים ראתה אותו
+       (`halBodyChars` מוסיף `row.html`), ולכן שום בלם לא נדלק —
+       ועל המסך יצאה תווית "נושאי כלים" מעל רשימה ריקה.
+       תיקון שקרא את ה-html בשער ולא בציור הוא חצי תיקון. */
+    var filled = [], i;
     for(i = 0; i < (row.who || []).length; i++){
-      var w = row.who[i];
-      var li = halNode('li', 'margin:0 0 ' + mm(0.9),
-        '<b>' + String(w.name || '') + ':</b> ' + String(w.html || ''));
-      li.querySelector('b') && (li.querySelector('b').style.color = '#4b3f7a');
-      ul.appendChild(li);
+      var w = row.who[i] || {};
+      if(String(w.name || '').trim() || String(w.html || '').trim()) filled.push(w);
     }
-    body.appendChild(ul);
+    body = el('div', 'flex:1 1 auto;font-size:' + pt(12.4));
+    if(filled.length){
+      var ul = el('ul', 'list-style:none;padding:0;margin:0');
+      for(i = 0; i < filled.length; i++){
+        var li = halNode('li', 'margin:0 0 ' + mm(0.9),
+          '<b>' + String(filled[i].name || '') + ':</b> ' + String(filled[i].html || ''));
+        li.querySelector('b') && (li.querySelector('b').style.color = '#4b3f7a');
+        ul.appendChild(li);
+      }
+      body.appendChild(ul);
+    } else if(String(row.html || '').trim()){
+      /* נושאי הכלים נכתבו כ-html חופשי - זו הצורה שהמודל מחזיר כאן
+         בפועל, ולכן זה המסלול הרגיל ולא מקרה קצה. */
+      body.appendChild(halNode('div', '', row.html));
+    } else {
+      /* אין לא `who` ולא `html` - שורה בלי שום תוכן. תווית בלי גוף
+         היא בדיוק מה שהמשתמש ראה, ולכן לא מציירים אותה כלל. */
+      return null;
+    }
   } else if(kind === 'ex'){
     body = el('div', 'flex:1 1 auto');
     body.appendChild(halNode('div', 'background:#eef5f1;border-radius:' + mm(1.2) +
@@ -3864,7 +3891,11 @@ function halUnitNodes(u, idx){
         if(bl.src) h3.appendChild(el('span', 'font-size:' + pt(11) + ';color:#777;font-weight:normal',
           ' ' + bl.src));
         items.push({ el: h3, keep: true });
-        for(k = 0; k < (bl.rows || []).length; k++) items.push(halRow(bl.rows[k], col[0]));
+        for(k = 0; k < (bl.rows || []).length; k++){
+          /* `halRow` מחזיר null לשורה שאין בה שום תוכן (23/11) */
+          var rowNode = halRow(bl.rows[k], col[0]);
+          if(rowNode) items.push(rowNode);
+        }
       }
     }
   }
@@ -4277,8 +4308,6 @@ function halRun(keys, material, extra, say, token){
       (chunks.length > 1 ? (' · ' + chunks.length + ' יחידות') : '') };
   });
 }
-
-
 
 /* ==== END sheet_client ==== */
 /* ---------- הרצה ---------- */
