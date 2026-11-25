@@ -3529,12 +3529,86 @@ function halNode(tag, css, html){
     ul[i].style.cssText = 'margin:' + mm(0.5) + ' 0 ' + mm(1) + ';padding-right:' + mm(5);
   return d;
 }
-/* הטקסט הנקי של אלמנט, לתצוגה ולהעתקה. */
+/* ===================================================================
+   הטקסט הנקי של אלמנט, לתצוגה ולהעתקה   (25/11/26)
+   ===================================================================
+   התלונה: "בסיכום הלכתי באפליקציה לא מופיעה זהות נושאי הכלים, והטקסט
+   נשאר דבוק מילה במילה - אבל כשאני מוריד PDF זה תקין."
+
+   השורש, והוא נמדד בדפדפן אמיתי (`richtext_probe.py`) ולא שוער:
+   `richText` נקרא על התוצר של `halDoc` **לפני** שהאלמנטים נכנסו
+   ל-DOM (העימוד קורה אחר כך, בלחיצה על "הורד PDF"). ב-DOM מנותק
+   `innerText` מוגדר בתקן כשווה ל-`textContent`, ו-`textContent`
+   משרשר אלמנטי block **בלי שום מפריד**. מכאן, בדיוק כפי שנמדד:
+   "השו״עכלי שנבלע", "רמ״אויש מחמירין", ו - התלונה המרכזית -
+   "נושאי כליםט״ז (ס״ק י״א): ... ראשון.ש״ך (ס״ק ז׳):", כלומר שמות
+   נושאי הכלים נדבקים לתווית ואחד לשני ואי אפשר לזהות מי אמר מה.
+   ה-PDF תקין מפני שהוא נבנה מהאלמנטים עצמם ואינו עובר כאן בכלל.
+
+   למה לא `innerText` על עותק מחובר ל-DOM: זה היה דורש הזרקה לדף,
+   רינדור וסילוק בכל תוצר - עבודה שנראית למשתמש (הבהוב) ותלויה
+   ב-CSS. המבנה לבדו מספיק: המפריד נגזר מסוג התג.
+
+   השוואה לבוט: `halacha.text_of` מחליף כל תג ב**רווח**, ולכן שם
+   מילים אינן נדבקות מעולם. כאן נשמרות גם ירידות השורה, כי זה טקסט
+   שהמשתמש קורא על המסך ומעתיק - ולא ספירת מילים.                */
+var RT_INLINE = { SPAN:1, B:1, STRONG:1, I:1, EM:1, U:1, A:1, SMALL:1,
+                  BIG:1, SUP:1, SUB:1, CODE:1, FONT:1, LABEL:1 };
+
+function richNodeText(node, out, tight){
+  var i;
+  if(node.nodeType === 3){ out.push(String(node.nodeValue || '')); return; }
+  if(node.nodeType !== 1) return;
+  var tag = node.tagName;
+  if(tag === 'BR'){ out.push('\n'); return; }
+  if(tag === 'STYLE' || tag === 'SCRIPT') return;
+  var inline = !!RT_INLINE[tag];
+  /* תווית של שורה ("השו״ע", "נושאי כלים") מסומנת ב-`halRow`, ואחריה
+     מקף ולא ירידת שורה: "השו״ע - כלי שנבלע..." נקרא כמשפט אחד,
+     כמו בגיליון של הבוט. בלי הסימון היא שורה בודדת מעל הגוף. */
+  var lbl = node.getAttribute && node.getAttribute('data-rt') === 'lbl';
+  /* `display:flex` הוא שורה **אחת** על המסך (שורת תווית+גוף, שורת
+     המפתח, כותרת חלק, שלב בסוגיה), ולכן הבנים שלה מופרדים ברווח
+     ולא בירידת שורה. בלי זה כל שורה כזו התפרקה לשלוש פסקאות -
+     "1" / "א׳ · סימן קפ״ג" / "דיני הכשרת כלים" - וזה אינו הטקסט
+     שהמשתמש רואה. תא טבלה מופרד ב-"|" מאותה סיבה. */
+  var flex = !!(node.style && String(node.style.display) === 'flex');
+  var cell = (tag === 'TH' || tag === 'TD');
+  var open = (!inline && !tight && !cell);
+  if(open) out.push('\n');
+  if(tag === 'LI') out.push('• ');
+  /* `tight` חל על הבנים **הישירים** של שורת ה-flex ואינו מתפשט
+     הלאה: רשימת נושאי הכלים יושבת ב-ul בתוך גוף השורה, ובהתפשטות
+     כל הפריטים נדחסו לשורה אחת ארוכה - כלומר הזהות של כל נושא
+     כלים שוב נבלעה, רק ברווחים במקום בלי כלום. */
+  for(i = 0; i < node.childNodes.length; i++)
+    richNodeText(node.childNodes[i], out, flex || (cell && !!RT_INLINE[tag]));
+  if(cell) out.push(' | ');
+  else if(lbl) out.push(RT_DASH);
+  else if(open) out.push('\n');
+  else if(!inline) out.push(' ');
+}
+
+var RT_DASH = ' – ';
+
 function richText(items){
   var out = [], i;
   for(i = 0; i < items.length; i++){
-    var t = (items[i].el.innerText || items[i].el.textContent || '').replace(/ /g, ' ');
-    t = t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    var buf = [];
+    richNodeText(items[i].el, buf, false);
+    var t = buf.join('')
+      .replace(/ /g, ' ')
+      /* רווח ברוחב אפס שהוזרק לצורך הצילום אינו טקסט */
+      .replace(/[​⁠]/g, '')
+      .replace(/[ \t]*\n[ \t]*/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/ \| *\n/g, '\n')         /* מפריד תאים בסוף שורת טבלה */
+      .replace(/\n{3,}/g, '\n\n');
+    /* תווית שגופה פתח שורה חדשה - מחזירים לאותה שורה */
+    t = t.split(RT_DASH + '\n').join(RT_DASH);
+    t = t.replace(/[ \t]*–[ \t]*\n+/g, RT_DASH)
+         .replace(/\n{3,}/g, '\n\n')
+         .replace(/^\s+|\s+$/g, '');
     if(t) out.push(t);
   }
   return out.join('\n\n');
@@ -3847,6 +3921,9 @@ function halRow(row, main){
     ';font-weight:bold;text-align:center;border-radius:' + mm(1.2) + ';padding:' +
     mm(0.6) + ' ' + mm(1) + ';margin-top:' + mm(0.9) + ';line-height:1.22;color:#fff;' +
     'background:' + (kind === 'main' ? main : (HAL_LBL[kind] || '#8a8a8a')), label);
+  /* 25/11/26 — סימון לבניית הטקסט שעל המסך (`richNodeText`), כדי
+     שהתווית תישאר באותה שורה עם הגוף שלה ולא תיראה כפסקה בודדת. */
+  lbl.setAttribute('data-rt', 'lbl');
   wrap.appendChild(lbl);
   var body;
   if(kind === 'nk'){
@@ -3924,6 +4001,20 @@ function halUnitNodes(u, idx){
       if(t === 'note'){
         items.push({ el: halNode('div', 'font-size:' + pt(11.5) + ';color:#6b6b6b;margin:' +
           mm(1) + ' 0 ' + mm(2), bl.html) });
+      } else if(t === 'table' || (t !== 'sugya' && !(bl.rows || []).length &&
+                                  /<table/i.test(String(bl.html || '')))){
+        /* 25/11/26 — בלוק טבלה נזרק בשקט, כאן **וגם** ב-`halacha._row`
+           של הבוט: שני הצדדים נפלו ל-else, שמצייר כותרת ושורות
+           (`bl.rows`) ואינו נוגע ב-`bl.html` בכלל. ההנחיה בפרומפט
+           דורשת במפורש טבלה למחלוקת של שתי שיטות ומעלה, כלומר זה
+           פלט צפוי ולא מקרה קצה - וכל מה שהמודל שם שם נעלם מהמסמך
+           ומה-PDF, בלי שום סימן. מחיקה שקטה של תוכן היא באג. */
+        if(bl.heading) items.push({ el: el('div', 'font-size:' + pt(14.5) +
+          ';font-weight:bold;margin:' + mm(3) + ' 0 ' + mm(1.2) + ';padding:' + mm(0.7) +
+          ' ' + mm(2.5) + ';border-radius:' + mm(1) + ';line-height:1.25;color:' + col[1] +
+          ';background:' + col[2] + ';border-right:5px solid ' + col[0], bl.heading),
+          keep: true });
+        items.push({ el: halNode('div', 'font-size:' + pt(12.4), bl.html) });
       } else if(t === 'sugya'){
         var box = el('div', 'border:2px solid #3b4f8a;border-radius:' + mm(2) + ';padding:' +
           mm(2.5) + ' ' + mm(3.5) + ' ' + mm(1.5) + ';margin:' + mm(3) + ' 0;background:#fafbfe');
