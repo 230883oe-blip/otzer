@@ -6287,11 +6287,16 @@ var LES_CSS =
 ' padding-bottom: 1mm; border-bottom: 0.7pt solid #999 }\n' +
 '.lesdoc p { margin: 0 0 2mm }\n' +
 '.lesdoc ol, .lesdoc ul, .lesdoc li { direction: rtl; text-align: right; list-style-position: outside }\n' +
+/* 26/11/26 — מנוע הצילום (html2canvas) מצייר את סמן הרשימה בעצמו ואינו
+   מכבד כיוון כתיבה, ולכן המספר נחת בקצה השמאלי. המספר נכתב עכשיו
+   כטקסט בתוך הפריט (`lesNum`), והסמן מבוטל. `ul` נשאר כשהיה. */
+'.lesdoc ol { list-style: none }\n' +
+'.lesdoc ol > li > .n { font-family: Arial,sans-serif; font-weight: bold }\n' +
 '.lesdoc .prep { border: 0.8pt solid #333; padding: 2.2mm 3.5mm; margin-bottom: 3mm;' +
 ' font-size: 9.9pt }\n' +
 '.lesdoc .prep b { font-family: Arial,sans-serif; font-size: 9.5pt; letter-spacing: .5pt;' +
 ' display: block; margin-bottom: 1.5mm }\n' +
-'.lesdoc .prep ol { margin: 0; padding-right: 5mm }\n' +
+'.lesdoc .prep ol { margin: 0; padding-right: 0 }\n' +
 '.lesdoc .prep li { margin-bottom: 1mm }\n' +
 '.lesdoc table { width: 100%; border-collapse: collapse; font-size: 9.9pt }\n' +
 '.lesdoc th { font-family: Arial,sans-serif; font-size: 9pt; text-align: right; background: #eee;' +
@@ -6302,12 +6307,12 @@ var LES_CSS =
 '.lesdoc td.s { width: 42mm; font-weight: bold }\n' +
 '.lesdoc tr.stop td.t { background: #f0f0f0 }\n' +
 '.lesdoc tr.stop td.s:before { content: "\\25C0  "; font-size: 7pt; vertical-align: middle }\n' +
-'.lesdoc ol.q { margin: 0; padding-right: 6mm }\n' +
+'.lesdoc ol.q { margin: 0; padding-right: 0 }\n' +
 '.lesdoc ol.q > li { margin-bottom: 1.6mm }\n' +
 '.lesdoc ol.q b { display: block; font-family: Arial,sans-serif; font-size: 9.6pt;' +
 ' margin-bottom: 0.3mm }\n' +
 '.lesdoc .lines { border-bottom: 0.4pt dotted #999; height: 3.6mm; margin-top: 0.8mm }\n' +
-'.lesdoc ol.a { margin: 0; padding-right: 6mm }\n' +
+'.lesdoc ol.a { margin: 0; padding-right: 0 }\n' +
 '.lesdoc ol.a > li { margin-bottom: 2.8mm }\n' +
 '.lesdoc ol.a b { font-family: Arial,sans-serif; font-size: 10pt }\n' +
 '.lesdoc .src { font-family: Arial,sans-serif; font-size: 8.5pt; color: #555; display: block;' +
@@ -6343,6 +6348,9 @@ function lesM(s){
                    function(m, c, n){ return '<' + c + n.toLowerCase() + '>'; });
 }
 
+/* המספר כטקסט, כמו בתוצר של הבוט: "1. פתיחת הסימן". */
+function lesNum(i){ return '<span class="n">' + (i + 1) + '.</span> '; }
+
 /* ---------- עמוד 1: מערך השיעור ---------- */
 function lesPlanTable(d){
   var rows = '<tr><th style="width:17mm">זמן</th><th style="width:42mm">שלב</th>' +
@@ -6363,7 +6371,8 @@ function lesPage1(d){
   var items = lesList(prep.items);
   if(items.length){
     h += '<div class="prep"><b>' + lesM(prep.title || 'לפני השיעור') + '</b><ol>';
-    for(i = 0; i < items.length; i++) h += '<li>' + lesM(items[i]) + '</li>';
+    for(i = 0; i < items.length; i++)
+      h += '<li>' + lesNum(i) + lesM(items[i]) + '</li>';
     h += '</ol></div>';
   }
   var goals = lesList(d.goals);
@@ -6437,7 +6446,8 @@ function lesPage3(d){
   var q = lesList(d.questions);
   for(i = 0; i < q.length; i++){
     var it = q[i] || {};
-    h += '<li>' + (lesStr(it.title) ? '<b>' + lesM(it.title) + '</b>' : '') +
+    h += '<li>' + (lesStr(it.title) ? '<b>' + lesNum(i) + lesM(it.title) + '</b>'
+                                    : lesNum(i)) +
          lesM(it.q || it.question) +
          '<div class="lines"></div><div class="lines"></div></li>';
   }
@@ -6453,7 +6463,8 @@ function lesPage4(d){
   var a = lesList(d.answers);
   for(i = 0; i < a.length; i++){
     var it = a[i] || {};
-    h += '<li>' + (lesStr(it.title) ? '<b>' + lesM(it.title) + '.</b> ' : '') +
+    h += '<li>' + (lesStr(it.title) ? '<b>' + lesNum(i) + lesM(it.title) + '.</b> '
+                                    : lesNum(i)) +
          lesM(it.a || it.answer) +
          (lesStr(it.src) ? '<span class="src">' + lesM(it.src) + '</span>' : '') + '</li>';
   }
