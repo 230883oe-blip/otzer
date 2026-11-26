@@ -6108,6 +6108,449 @@ function pedPlain(res){
 }
 
 /* ==== END ped_client ==== */
+/* ==== BEGIN les_client ==== */
+/* ===================================================================
+   📚 מערך שיעור — הפורט של `lesson.py` + `lesson_bot/templates`
+   ===================================================================
+   25/11/26, התלונה: "תסתכל בבוט הטקסטים בכפתור מערך שיעור בתוצאה
+   לעומת התוצאה בכפתור מערך שיעור באפליקציה ותראה יש הבדל גדול הן
+   בתוצר והן בעיצוב והן שחסר דף שאלות ודף תשובות. וגם מערך שיעור הוא
+   בברירת מחדל 4 דפים בפי די אף וחייבים לסדר הכל בהתאם כמו בבוט."
+
+   מה היה כאן: מערך השיעור נשאר **המצב היחיד** באפליקציה שרץ בפרומפט
+   טקסט חופשי ובעימוד גנרי (`pdfBlocks`/`pdfPaginate`), אחרי שדף
+   מקורות (18/11), סיכום הלכתי (18/11), דף גמרא ותכנים פדגוגיים
+   (23/11) כבר עברו ל-JSON מובנה עם מעמד ייעודי. ההבדל שהמשתמש רואה
+   נובע ישירות מזה:
+
+   · **עיצוב** — בבוט יש תבנית מכוילת (`lesson_skeleton.html`): תיבת
+     הכנה במסגרת, טבלת זמנים עם עמודת דקות צרה ושורות "עצירה" ברקע
+     אפור ובחץ, דף מקורות עם ציטוט בקו צד, דף שאלות עם **שורות
+     כתיבה מנוקדות**, ומפתח תשובות עם שורת מקור קטנה. עימוד גנרי
+     אינו יכול לייצר אף אחד מאלה - הוא מקבל פסקאות ולא מבנה.
+   · **דף שאלות ודף תשובות** - נכתבו כטקסט בתוך אותו רצף, ולכן גם
+     כשהמחיצה (22/11) פתחה עמוד חדש, הם יצאו פסקאות ממוספרות בלי
+     שורות כתיבה ובלי מפתח תואם. "שאלה" ו"תשובה" אינם צורה; הם
+     שני דפים עם שני תפקידים שונים.
+   · **ארבעה עמודים** - בבוט `render_pdf.py` סופר `div.page` ואוכף
+     ארבעה. כאן המספר יצא ממה שנדחס לגובה.
+
+   הסכמה וההנחיות הן העתק מ-`lesson_bot/SPEC.md` (אותו קובץ שהבוט
+   מורה למודל לקרוא, וממנו נגזר `LESSON_SPEC` ב-Code.gs), והאכיפה
+   (10 שאלות, מפתח תואם, 4 מלכודות) היא הפורט של
+   `lesson.html_problems`.                                          */
+
+var LES_SYS = 'אתה ר"מ ותיק שבונה מערכי שיעור להדפסה למחנך בבית מדרש.\n' +
+'הכול בעברית, ברור ומדויק. אל תמציא מקור, ציטוט או מראה מקום שאינם בחומר שקיבלת.\n' +
+'מקור שהחומר רק מזכיר בלי לצטט - לכתוב מה הוא אומר במילים שלך ולא כציטוט.\n' +
+'בונים שיעור על כל מקור ועל כל נושא - תמיד, בלי לסרב ובלי לשאול אם זה מתאים.';
+
+/* ההנחיה. `{spec}` מוחלף ב-`LESSON_SPEC` של Code.gs — אותו מפרט
+   מחייב שהבוט נותן למודל, ולכן אין כאן גרסה שנייה שלו שתתפצל. */
+var LES_PROMPT =
+'{spec}\n\n' +
+'לפניך חומר בשם "{title}". בנה ממנו מערך שיעור להדפסה.\n' +
+'החזר JSON בלבד, בלי שום טקסט לפניו ואחריו, בלי מרקדאון ובלי ```.\n\n' +
+'ברירת מחדל: 80 דקות, כיתה ז׳ תורנית, שיעור כיתתי. אם צוינו כיתה, משך או מבנה אחרים - לפיהם.\n\n' +
+'השדות:\n' +
+'  title   - כותרת קצרה ומזוהה של המקרה (לא "מערך שיעור").\n' +
+'  short   - 2-4 מילים לשם הקובץ.\n' +
+'  sub     - שורה אחת: משך · כיתה · נושא | מקור המקרה.\n' +
+'  prep    - תיבת ההכנה: { title, items: [3-5 צעדים קצרים - מה להכין, מה להדפיס,\n' +
+'            מה לכתוב על הלוח] }.\n' +
+'  goals   - 2 עד 3 מטרות, מחרוזות קצרות.\n' +
+'  prior   - ידע מוקדם, שורה אחת.\n' +
+'  hook    - האביזר או הפעולה הפותחת, 2-3 משפטים. **נגזרת מהחומר הזה ולא גנרית**,\n' +
+'            ומתאימה לכיתה תורנית: חפץ אחד, משפט שנכתב על הלוח ונשאר עד הסוף, או רגע\n' +
+'            אחד. לא סימולציה, לא משחק תפקידים, לא בית דין - נמדד שזה לא עובד בכיתה.\n' +
+'  plan    - טבלת השלבים, 8 עד 11 שורות שהדקות שלהן מסתכמות למשך שנקבע.\n' +
+'            לכל שורה: time ("0-5"), stage (שם השלב), what (מה המורה אומר ועושה ומה\n' +
+'            התלמידים עושים, משפט או שניים שלמים), ו-stop=true לשורת עצירה.\n' +
+'            חובה שיופיעו, בסדר הזה: קריאת החומר בחלקים · **עצירת הצבעה** שבה סופרים\n' +
+'            ידיים, כותבים את המספר בפינת הלוח ולא מגיבים (stop) · המשך והטוויסט ·\n' +
+'            העצירה הרגשית/המוסרית (stop) · השאלה המרכזית כלשונה · **חברותא על שאלה\n' +
+'            אחת בלבד**, כל חברותא כותבת פתק · הגילוי והשיטות · **דיון כיתתי** עם שלוש\n' +
+'            שאלות מדורגות שהאחרונה אישית · סגירה שחוזרת למספרי ההצבעה ולשאלה שעל הלוח.\n' +
+'  traps   - **בדיוק ארבע** מלכודות. לכל אחת: { trap, say } - מה התלמידים ינסו,\n' +
+'            ומשפט מוכן שהמורה אומר.\n' +
+'  srctitle - כותרת דף המקורות (נושא).\n' +
+'  srcline - רשימת המקורות בשורה אחת.\n' +
+'  sources - 4 עד 7 מקורות לדף התלמיד. לכל אחד: { cite (מראה מקום), quote (לשון\n' +
+'            המקור - **רק כשהלשון ודאית**: פסוק, משנה, או לשון שמובאת בחומר עצמו.\n' +
+'            אחרת מחרוזת ריקה), note (תוכן המקור בקירוב, או שורה אחת למה הוא כאן) }.\n' +
+'  sides   - שתי הדרכים/שני הצדדים: { a: {title, body}, b: {title, body} }.\n' +
+'            בכל body גם "ולכן: ..." בסוף.\n' +
+'  questions - **בדיוק 10** שאלות לדף התלמיד. לכל אחת: { title (כותרת קצרה),\n' +
+'            q (השאלה, משפט או שניים) }.\n' +
+'            כל שאלה **מעוגנת בעובדה מהחומר ובשמות הדמויות** ("חיים אמר אני מוחל\n' +
+'            כשהיה בן 12 - האם המחילה חלה?") ולא נושא כללי ("האם מחילת קטן מועילה").\n' +
+'            שאלה 1 = שאלת הליבה. שאלה 10 = "מה עליו לעשות עכשיו, ומדוע?".\n' +
+'  bonus   - שאלת בונוס אחת.\n' +
+'  answers - **בדיוק 10** תשובות, באותו סדר ובאותן כותרות כמו questions.\n' +
+'            לכל אחת: { title, a (הכיוון וההכרעה; הדגשה ב-**כך**), src (שורה קטנה:\n' +
+'            מקור או הערה למורה - מה פתוח, מה לחדד) }.\n' +
+'            **לסמן במפורש מה פתוח**: כשאין הכרעה בחומר - "שאלה שראוי להשאיר\n' +
+'            פתוחה", ולא להמציא פסק.\n' +
+'  bonus_a - התשובה לשאלת הבונוס.\n' +
+'  foot    - שורת "בקירוב": "לשון המקורות מובאת בקירוב" + הפניה לעיון בפנים.\n\n' +
+'{extra}\n' +
+'החומר:\n\n{text}';
+
+function lesList(x){ return (x instanceof Array) ? x : []; }
+function lesStr(x){ return String(x == null ? '' : x).replace(/^\s+|\s+$/g, ''); }
+
+/* הצורה המינימלית. בלעדיה אין מערך שיעור ולא כדאי לעמד כלום. */
+function lesOk(d){
+  if(!d || typeof d !== 'object') return false;
+  if(!lesStr(d.title)) return false;
+  if(lesList(d.plan).length < 4) return false;
+  if(lesList(d.questions).length < 4) return false;
+  return true;
+}
+
+var LES_QUESTIONS = 10;
+var LES_TRAPS = 4;
+
+/* הפורט של `lesson.html_problems`: ברירות המחדל נאכפות בקוד ולא
+   בהנחיה, מפני שהמודל נוטה "לשפר" (שבע שאלות לחומר קצר, מפתח עם
+   שמונה). מספר שאלות שאינו שווה למספר התשובות הוא דף שאלות שאין
+   לו מפתח - וזה מה שהמשתמש מגלה בכיתה. */
+function lesProblems(d, free){
+  var bad = [], q = lesList(d.questions).length, a = lesList(d.answers).length;
+  if(!free){
+    if(q !== LES_QUESTIONS) bad.push('בדף השאלות ' + q + ' שאלות במקום ' + LES_QUESTIONS + '.');
+    if(a !== LES_QUESTIONS) bad.push('במפתח התשובות ' + a + ' תשובות במקום ' + LES_QUESTIONS + '.');
+  }
+  if(q !== a) bad.push('מספר השאלות (' + q + ') אינו שווה למספר התשובות (' + a + ').');
+  if(lesList(d.traps).length !== LES_TRAPS)
+    bad.push('צריך בדיוק ' + LES_TRAPS + ' מלכודות, ויש ' + lesList(d.traps).length + '.');
+  if(lesList(d.sources).length < 2) bad.push('בדף המקורות פחות משני מקורות.');
+  if(!lesStr(d.hook)) bad.push('חסר האביזר או הפעולה הפותחת.');
+  return bad;
+}
+
+/* ביקש מספר שאלות אחר ("רק 6 שאלות") - אז לא אוכפים 10.
+   הפורט של `lesson._asked_other_count`. */
+function lesFreeCount(text){
+  return /\d+\s*שאלות|שאלות\s*\d+/.test(String(text == null ? '' : text));
+}
+
+function lesRun(keys, body, extra, title, say, token){
+  var spec = (typeof LESSON_SPEC === 'string') ? LESSON_SPEC : '';
+  var free = lesFreeCount(extra) || lesFreeCount(body);
+  var base = LES_PROMPT
+    .replace('{spec}', spec)
+    .replace('{title}', title || 'החומר')
+    .replace('{extra}', extra ? ('הנחיה נוספת מהמשתמש (גוברת על ברירות המחדל): ' + extra + '\n') : '')
+    .replace('{text}', body);
+  var prompt = base;
+  function attempt(k){
+    jobCheck(token);
+    if(say) say(k === 1 ? 'בונה את מערך השיעור בארבעה דפים…'
+                        : 'משלים את מה שחסר…');
+    return askOne(keys, LES_SYS, prompt).then(function(r){
+      jobCheck(token);
+      var d = r && r.text ? gemJson(r.text) : null;
+      if(lesOk(d)){
+        var bad = lesProblems(d, free);
+        if(!bad.length || k === 2) return { d: d, via: r.via, gaps: bad, free: free };
+        prompt = base + '\n\n(בתשובה הקודמת: ' + bad.join(' ') +
+                 ' תקן והחזר JSON שלם מחדש, עם כל השדות.)';
+        return attempt(k + 1);
+      }
+      if(k < 2){
+        prompt = base + '\n\n(התשובה הקודמת לא הייתה JSON תקין במבנה שהתבקש. ' +
+                 'החזר JSON תקין בלבד, בלי שום טקסט מסביב.)';
+        return attempt(k + 1);
+      }
+      return null;
+    });
+  }
+  return attempt(1);
+}
+
+/* ===================================================================
+   העיצוב — הפורט של `lesson_bot/templates/lesson_skeleton.html`
+   ===================================================================
+   המידות שם מכוילות כך שכל חלק נכנס בדף A4 אחד, ולכן הן מועתקות
+   כפי שהן ולא "משופרות": שינוי גודל בלי מדידה הוא בדיוק מה שמוציא
+   חלק לעמוד שני. ההמרה היחידה היא pt←→px דרך `pt()`, כמו בשאר
+   המודולים כאן.                                                  */
+var LES_CSS =
+'.lesdoc { font-family: "Frank Ruehl CLM","FrankRuehl","David","Times New Roman",serif;' +
+' font-size: 10.4pt; line-height: 1.42; color: #111; direction: rtl; text-align: right }\n' +
+'.lesdoc h1 { font-family: Arial,"Segoe UI",sans-serif; font-size: 18pt; margin: 0 0 1.5mm;' +
+' letter-spacing: -0.3pt }\n' +
+'.lesdoc .sub { font-family: Arial,sans-serif; font-size: 9.5pt; color: #444; margin: 0 0 4mm;' +
+' padding-bottom: 3mm; border-bottom: 1.5pt solid #111 }\n' +
+'.lesdoc h2 { font-family: Arial,sans-serif; font-size: 11.5pt; margin: 3.5mm 0 1.5mm;' +
+' padding-bottom: 1mm; border-bottom: 0.7pt solid #999 }\n' +
+'.lesdoc p { margin: 0 0 2mm }\n' +
+'.lesdoc ol, .lesdoc ul, .lesdoc li { direction: rtl; text-align: right; list-style-position: outside }\n' +
+'.lesdoc .prep { border: 0.8pt solid #333; padding: 2.2mm 3.5mm; margin-bottom: 3mm;' +
+' font-size: 9.9pt }\n' +
+'.lesdoc .prep b { font-family: Arial,sans-serif; font-size: 9.5pt; letter-spacing: .5pt;' +
+' display: block; margin-bottom: 1.5mm }\n' +
+'.lesdoc .prep ol { margin: 0; padding-right: 5mm }\n' +
+'.lesdoc .prep li { margin-bottom: 1mm }\n' +
+'.lesdoc table { width: 100%; border-collapse: collapse; font-size: 9.9pt }\n' +
+'.lesdoc th { font-family: Arial,sans-serif; font-size: 9pt; text-align: right; background: #eee;' +
+' padding: 1.5mm 2mm; border: 0.5pt solid #aaa; letter-spacing: .3pt }\n' +
+'.lesdoc td { padding: 1.2mm 1.8mm; border: 0.5pt solid #ccc; vertical-align: top }\n' +
+'.lesdoc td.t { font-family: Arial,sans-serif; font-size: 9.5pt; white-space: nowrap;' +
+' width: 17mm; text-align: center; font-weight: bold; direction: ltr }\n' +
+'.lesdoc td.s { width: 42mm; font-weight: bold }\n' +
+'.lesdoc tr.stop td.t { background: #f0f0f0 }\n' +
+'.lesdoc tr.stop td.s:before { content: "\\25C0  "; font-size: 7pt; vertical-align: middle }\n' +
+'.lesdoc ol.q { margin: 0; padding-right: 6mm }\n' +
+'.lesdoc ol.q > li { margin-bottom: 1.6mm }\n' +
+'.lesdoc ol.q b { display: block; font-family: Arial,sans-serif; font-size: 9.6pt;' +
+' margin-bottom: 0.3mm }\n' +
+'.lesdoc .lines { border-bottom: 0.4pt dotted #999; height: 3.6mm; margin-top: 0.8mm }\n' +
+'.lesdoc ol.a { margin: 0; padding-right: 6mm }\n' +
+'.lesdoc ol.a > li { margin-bottom: 2.8mm }\n' +
+'.lesdoc ol.a b { font-family: Arial,sans-serif; font-size: 10pt }\n' +
+'.lesdoc .src { font-family: Arial,sans-serif; font-size: 8.5pt; color: #555; display: block;' +
+' margin-top: 0.5mm }\n' +
+'.lesdoc .srcsheet > div { margin-bottom: 2.6mm }\n' +
+'.lesdoc .srcsheet .cite { font-family: Arial,sans-serif; font-size: 9pt; font-weight: bold;' +
+' margin-bottom: 0.8mm }\n' +
+'.lesdoc .srcsheet .txt { border-right: 1.5pt solid #666; padding-right: 3mm; font-size: 10.8pt }\n' +
+'.lesdoc .srcsheet .note { font-size: 10pt; color: #333 }\n' +
+/* איפוס מול `.note` הגלובלי של האפליקציה (מסגרת, רקע, ריפוד) */
+'.lesdoc .note { background: none; border: 0; border-radius: 0; padding: 0; margin: 0; box-shadow: none }\n' +
+'.lesdoc .foot { margin-top: 3mm; padding-top: 2mm; border-top: 0.5pt solid #bbb;' +
+' font-size: 8.5pt; color: #666; font-family: Arial,sans-serif }\n';
+
+var _lesStyled = false;
+function lesStyle(){
+  if(_lesStyled) return;
+  var s = document.createElement('style');
+  s.id = 'lesCss';
+  s.textContent = LES_CSS;
+  document.head.appendChild(s);
+  _lesStyled = true;
+}
+
+/* טקסט של המודל ← HTML: escape ואז "**מודגש**". כמו `pedM`. */
+function lesM(s){
+  var t = String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  t = t.replace(/\*\*([\s\S]+?)\*\*/g, '<strong>$1</strong>').replace(/\*\*/g, '');
+  /* רשימה לבנה קצרה, כמו `halacha.clean_html`: המודל כותב `<br>`
+     ו-`<b>` גם כשמבקשים `**`, ובלי זה התגית מודפסת כטקסט. */
+  return t.replace(/&lt;(\/?)(br|b|strong|em|i)\s*\/?&gt;/gi,
+                   function(m, c, n){ return '<' + c + n.toLowerCase() + '>'; });
+}
+
+/* ---------- עמוד 1: מערך השיעור ---------- */
+function lesPlanTable(d){
+  var rows = '<tr><th style="width:17mm">זמן</th><th style="width:42mm">שלב</th>' +
+             '<th>מה עושים</th></tr>', i, p = lesList(d.plan);
+  for(i = 0; i < p.length; i++){
+    var r = p[i];
+    if(!r || typeof r !== 'object') continue;
+    rows += '<tr' + (r.stop ? ' class="stop"' : '') + '><td class="t">' + lesM(r.time) +
+            '</td><td class="s">' + lesM(r.stage) + '</td><td>' + lesM(r.what) + '</td></tr>';
+  }
+  return '<table>' + rows + '</table>';
+}
+
+function lesPage1(d){
+  var i, h = '<h1>' + lesM(d.title) + '</h1>' +
+    '<p class="sub">מערך שיעור · ' + lesM(d.sub) + '</p>';
+  var prep = (d.prep && typeof d.prep === 'object') ? d.prep : {};
+  var items = lesList(prep.items);
+  if(items.length){
+    h += '<div class="prep"><b>' + lesM(prep.title || 'לפני השיעור') + '</b><ol>';
+    for(i = 0; i < items.length; i++) h += '<li>' + lesM(items[i]) + '</li>';
+    h += '</ol></div>';
+  }
+  var goals = lesList(d.goals);
+  if(goals.length || lesStr(d.prior)){
+    h += '<h2>מטרות וידע מוקדם</h2><p>';
+    if(goals.length){
+      for(i = 0; i < goals.length; i++)
+        h += (i ? '&nbsp; · &nbsp;' : '') + lesM(goals[i]);
+    }
+    if(lesStr(d.prior)) h += (goals.length ? '<br>' : '') +
+      '<strong>ידע מוקדם:</strong> ' + lesM(d.prior);
+    h += '</p>';
+  }
+  if(lesStr(d.hook))
+    h += '<h2>הפתיחה — האביזר או הפעולה</h2><p>' + lesM(d.hook) + '</p>';
+  h += lesPlanTable(d);
+  var traps = lesList(d.traps);
+  if(traps.length){
+    h += '<h2>' + (traps.length === 4 ? 'ארבע מלכודות' : 'מלכודות') + '</h2><p>';
+    for(i = 0; i < traps.length; i++){
+      var t = traps[i] || {};
+      h += (i ? '&nbsp; · &nbsp;' : '') + '<strong>' + lesM(t.trap) + '</strong> — ' +
+           lesM(t.say || t.fix);
+    }
+    h += '</p>';
+  }
+  h += '<p class="foot">' + lesM(d.foot || 'לשון המקורות מובאת בקירוב. ' +
+       'כדאי להקריא את המקרה מתוך הספר עצמו ולעיין בפנים לפני השיעור.') + '</p>';
+  return h;
+}
+
+/* ---------- עמוד 2: דף מקורות לתלמיד ---------- */
+var LES_AB = 'אבגדהוזחטי';
+
+function lesPage2(d){
+  var i, h = '<h1>דף מקורות — ' + lesM(d.srctitle || d.title) + '</h1>';
+  if(lesStr(d.srcline)) h += '<p class="sub">' + lesM(d.srcline) + '</p>';
+  else h += '<p class="sub">' + lesM(d.sub) + '</p>';
+  var src = lesList(d.sources);
+  if(src.length){
+    h += '<div class="srcsheet">';
+    for(i = 0; i < src.length; i++){
+      var s = src[i] || {};
+      h += '<div><div class="cite">' + (LES_AB.charAt(i) || (i + 1)) + '. ' +
+           lesM(s.cite) + '</div>';
+      /* ציטוט רק כשיש לשון ודאית (קו האדום ב-SPEC סעיף 7); אחרת
+         התוכן בתיאור, וזה גם מה שמונע "ציטוט" מומצא. */
+      if(lesStr(s.quote)) h += '<div class="txt">' + lesM(s.quote) + '</div>';
+      if(lesStr(s.note)) h += '<div class="note"' +
+        (lesStr(s.quote) ? ' style="margin-top:1mm"' : '') + '>' + lesM(s.note) + '</div>';
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+  var sd = (d.sides && typeof d.sides === 'object') ? d.sides : {};
+  var a = sd.a || {}, b = sd.b || {};
+  if(lesStr(a.body) || lesStr(b.body)){
+    h += '<h2>' + lesM(d.sides_title || 'שתי הדרכים') + '</h2>' +
+      '<table><tr><th style="width:50%">' + lesM(a.title || 'צד א׳') + '</th><th>' +
+      lesM(b.title || 'צד ב׳') + '</th></tr><tr><td>' + lesM(a.body) + '</td><td>' +
+      lesM(b.body) + '</td></tr></table>';
+  }
+  return h;
+}
+
+/* ---------- עמוד 3: עשר שאלות (לתלמידים) ---------- */
+function lesPage3(d){
+  var i, h = '<h1>' + (lesList(d.questions).length === 10 ? 'עשר שאלות' : 'שאלות') +
+    '</h1><p class="sub">מקרה ' + lesM(d.title) +
+    ' · שם: ______________________ · חברותא: ______________________</p><ol class="q">';
+  var q = lesList(d.questions);
+  for(i = 0; i < q.length; i++){
+    var it = q[i] || {};
+    h += '<li>' + (lesStr(it.title) ? '<b>' + lesM(it.title) + '</b>' : '') +
+         lesM(it.q || it.question) +
+         '<div class="lines"></div><div class="lines"></div></li>';
+  }
+  h += '</ol>';
+  if(lesStr(d.bonus)) h += '<p class="foot">בונוס: ' + lesM(d.bonus) + '</p>';
+  return h;
+}
+
+/* ---------- עמוד 4: מפתח תשובות (למורה) ---------- */
+function lesPage4(d){
+  var i, h = '<h1>מפתח תשובות</h1>' +
+    '<p class="sub">למורה בלבד · הכיוונים והמקורות, ומה נשאר פתוח</p><ol class="a">';
+  var a = lesList(d.answers);
+  for(i = 0; i < a.length; i++){
+    var it = a[i] || {};
+    h += '<li>' + (lesStr(it.title) ? '<b>' + lesM(it.title) + '.</b> ' : '') +
+         lesM(it.a || it.answer) +
+         (lesStr(it.src) ? '<span class="src">' + lesM(it.src) + '</span>' : '') + '</li>';
+  }
+  h += '</ol>';
+  if(lesStr(d.bonus_a)) h += '<p class="foot">בונוס: ' + lesM(d.bonus_a) + '</p>';
+  return h;
+}
+
+/* ארבעת החלקים, לפי שמם. הסדר והשמות זהים ל-`lesson.py`
+   (`parts` ב-Code.gs ו-SPEC עמודים 1-4). */
+function lesParts(res){
+  var d = res.d;
+  var out = [{ key: 'plan', label: 'מערך השיעור', html: lesPage1(d) },
+             { key: 'src', label: 'דף מקורות לתלמיד', html: lesPage2(d) }];
+  if(lesList(d.questions).length)
+    out.push({ key: 'quest', label: 'דף שאלות', html: lesPage3(d) });
+  if(lesList(d.answers).length)
+    out.push({ key: 'key', label: 'מפתח תשובות', html: lesPage4(d) });
+  return out;
+}
+
+function lesPageEl(){
+  var d = document.createElement('div');
+  d.setAttribute('dir', 'rtl');
+  d.className = 'lesdoc';
+  d.style.cssText = 'box-sizing:border-box;position:relative;overflow:hidden;' +
+    'width:' + PG_W + 'px;height:' + PG_H + 'px;' +
+    'padding:' + mm(14) + ' ' + mm(15) + ';background:#fff';
+  return d;
+}
+
+/* חלק שחרג מעמוד אחד נשפך לעמוד שני ואינו נחתך: חיתוך הוא מחיקה
+   שקטה של תוכן, והיא אסורה כאן (אותו כלל של `pedPagesOf`). ברירת
+   המחדל נשארת ארבעה עמודים, כי כל חלק מכויל לדף אחד.            */
+function lesPagesOf(host, html, maxPages){
+  var probe = lesPageEl();
+  probe.style.height = 'auto';
+  probe.style.overflow = 'visible';
+  probe.innerHTML = html;
+  host.appendChild(probe);
+  var h = probe.scrollHeight;
+  host.removeChild(probe);
+  var count = Math.max(1, Math.min(maxPages || 2, Math.ceil(h / (PG_H - 1)))), pages = [], k;
+  for(k = 0; k < count; k++){
+    var pg = lesPageEl();
+    pg.style.padding = '0';
+    var win = document.createElement('div');
+    win.style.cssText = 'position:absolute;top:' + (-k * (PG_H - 1)) + 'px;right:0;left:0;' +
+      'padding:' + mm(14) + ' ' + mm(15);
+    win.innerHTML = html;
+    pg.appendChild(win);
+    host.appendChild(pg);
+    pdfBsd(pg);
+    pages.push(pg);
+  }
+  return pages;
+}
+
+/* מסמך **אחד** בן ארבעה עמודים, כמו ה-PDF של הבוט: המשתמש מדפיס
+   אותו ומחלק את העמודים בכיתה, ולכן ארבעה קבצים נפרדים היו עבודה
+   נוספת בלי שום תועלת. */
+function lesPages(res){
+  lesStyle();
+  var host = pdfHolder();
+  document.body.appendChild(host);
+  var parts = lesParts(res), pages = [], i;
+  for(i = 0; i < parts.length; i++)
+    pages = pages.concat(lesPagesOf(host, parts[i].html, 2));
+  return { host: host, pages: pages };
+}
+
+function lesPlain(res){
+  lesStyle();
+  var parts = lesParts(res), out = [], i;
+  for(i = 0; i < parts.length; i++){
+    var tmp = document.createElement('div');
+    tmp.className = 'lesdoc';
+    tmp.innerHTML = parts[i].html;
+    /* `richNodeText` ולא `innerText`: האלמנט אינו ב-DOM, ושם
+       `innerText` שווה ל-`textContent` ומדביק כל אלמנט block
+       לשכנו (נמדד 25/11 בסיכום ההלכתי). */
+    var buf = [];
+    richNodeText(tmp, buf, false);
+    var t = buf.join('')
+      .replace(/ /g, ' ')
+      .replace(/[​⁠]/g, '')
+      .replace(/[ \t]*\n[ \t]*/g, '\n')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/ \| *\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/^\s+|\s+$/g, '');
+    out.push('═══ עמוד ' + (i + 1) + ': ' + parts[i].label + ' ═══\n' + t);
+  }
+  return out.join('\n\n');
+}
+
+/* ==== END les_client ==== */
 /* ---------- הרצה ---------- */
 /* ---------- ביטול (18/11/26) ----------
    הבקשה: "כפתור ביטול שמבטל כל פעילות ומאפשר לי לבחור בכפתור אחר".
@@ -6453,7 +6896,30 @@ $('go').onclick = function(){
         });
     }
 
-    /* מצב רב-עמודי (מערך שיעור): עמוד בכל פנייה. רק כשהחומר נכנס
+    /* ---------- 📚 מערך שיעור: JSON מובנה, ארבעה עמודים (25/11/26) ----------
+       התלונה: "יש הבדל גדול הן בתוצר והן בעיצוב והן שחסר דף שאלות
+       ודף תשובות, וגם מערך שיעור הוא בברירת מחדל 4 דפים ב-PDF".
+       זה היה המצב **היחיד** שנשאר כאן בפרומפט טקסט חופשי ובעימוד
+       גנרי, אחרי שדף מקורות, סיכום הלכתי, גמרא ופדגוגיה כבר עברו
+       למבנה. עימוד גנרי מקבל פסקאות ולא יכול לייצר טבלת זמנים עם
+       שורות עצירה, דף מקורות עם ציטוט בקו צד, או דף שאלות עם שורות
+       כתיבה - ולכן ההבדל בעיצוב אינו קוסמטי אלא מבני. ראה
+       `les_client.js`, שהוא הפורט של `lesson_bot/templates`. */
+    if(ticket.mode === 'lesson'){
+      if(!srcNote && body.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').length < 200)
+        throw new Error('לא הצלחתי להביא חומר לשיעור - מה ששלחת הוא שורת בקשה ולא חומר. ' +
+          'כתוב מראה מקום שאביא מספריא, הדבק קישור, צרף קובץ או צילום דף, ' +
+          'או הדבק את החומר עצמו.');
+      return lesRun(tkeys(ticket), body, extra,
+                    (raw || '').split('\n')[0].substring(0, 60) || 'החומר', say, token)
+        .then(function(res){
+          if(!res) return null;
+          return { richKind: 'lesson', les: res,
+                   name: String(res.d.title || 'מערך שיעור'), via: res.via };
+        });
+    }
+
+    /* מצב רב-עמודי: עמוד בכל פנייה. רק כשהחומר נכנס
        בפנייה אחת - חומר שחורג מפוצל ממילא ב-`askLong`, ופיצול כפול
        היה מכפיל את מספר הפניות ושורף את המכסה. */
     if(ticket.parts && ticket.parts.length > 1 && prompt.length <= CHUNK_MAX)
@@ -6496,6 +6962,20 @@ $('go').onclick = function(){
                       name: pl[pi].name,
                       pages: (function(k){ return function(){ return pedPages(r.ped, k); }; })(pl[pi].key) });
         plain = pedPlain(r.ped);
+      } else if(r.richKind === 'lesson'){
+        /* מסמך **אחד** בן ארבעה עמודים, כמו ה-PDF של הבוט: המשתמש
+           מדפיס אותו ומחלק את העמודים בכיתה. */
+        var lp = lesParts(r.les);
+        docs = [{ label: 'מערך שיעור · ' + lp.length + ' עמודים',
+                  name: String(r.les.d.short || r.les.d.title || 'מערך שיעור'),
+                  pages: function(){ return lesPages(r.les); } }];
+        plain = lesPlain(r.les);
+        /* פער שנותר אחרי שני סבבים (פחות מעשר שאלות, מפתח שאינו
+           תואם) נאמר למשתמש ואינו נבלע - בבוט זה `result.warning`.
+           נכתב לשורת המקור שמעל התוצאה, כי אין כאן אלמנט אזהרה
+           נפרד ו-`note` דורס את תיבת השגיאות. */
+        if(r.les.gaps && r.les.gaps.length)
+          r.via = (r.via || '') + ' · שים לב: ' + r.les.gaps.join(' ');
       } else {
         build = (r.richKind === 'sheet')
           ? function(){ return sheetDoc(r.sheet, r.sheet.missing || [], r.raw); }
