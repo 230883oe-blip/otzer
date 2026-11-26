@@ -2637,8 +2637,48 @@ function splitChunks(t){
   return out;
 }
 
+/* 26/11/26 — "כתב לי בלאגן אחד גדול" בסיכום ההלכתי, והשורש כאן.
+   מה שנמדד מול המנועים החיים באותו בוקר, באותו פרומפט ובאותו חומר
+   (סימן קפ״ג יורה דעה, 23,692 תווים מספריא):
+     · ששת דגמי Gemini המלאים — 429 בכולם (בכרטיס יש **מפתח אחד**).
+     · llm7 (minimax / deepseek / glm / gpt-oss) — 400 / 401 / 429.
+     · pollinations — 413 מעל ~12,000 תווים, 402 מתחת, ועל 10,000
+       החזיר 1,803 תווים שאינם JSON תקין ואינם עברית אמיתית:
+       "שם המם", "זברני נוחות", ובאמצע משפט תווים בתאילנדית.
+     · gemini-3.1-flash-lite — **ענה**: 5,009 תווים, JSON שנפרס, עם unit.
+   כלומר ברגע שהמכסה נגמרת השרשרת מעדיפה על המוקטן של גוגל מנוע
+   שמחזיר זבל, וזה בדיוק מה שהגיע למסך.
+
+   ההערה מ-16/11 שהציבה את המוקטן אחרון נכונה, ולטקסט חופשי היא
+   נשארת בתוקפה: שם הכשל שלו הוא עברית דלה, ומנוע חינמי עדיף.
+   אבל במשימה שהתוצר שלה **JSON מובנה** (סיכום הלכתי, דף גמרא,
+   מערך שיעור, תכנים פדגוגיים) הכשל אינו "עברית דלה" אלא מסמך
+   שלא נבנה בכלל - ולכן שם הסדר הפוך.
+
+   הזיהוי הוא מהפנייה עצמה ולא מהקוראים: מסלול שהתוצר שלו JSON דורש
+   אותו במילים מפורשות, והנחיות הטקסט החופשי שבאות מהשרת אינן מזכירות
+   JSON כלל (נבדק ב-`Code.gs`). כך אין שתי רשימות שמתפצלות, ומסלול
+   JSON חדש מקבל את הסדר הנכון מעצם מה שהוא מבקש.
+
+   נבדקים **גם ההנחיה וגם הבקשה**, וזה לא ייתור: `HAL_SYS` ו-`GEM_SYS`
+   אומרים "JSON" בהנחיית המערכת, אבל `PED_SYS` ו-`LES_SYS` הם שתיים-
+   שלוש שורות של תפקיד ("אתה ר״מ ותיק..."), והדרישה למבנה יושבת
+   ב-`LES_PROMPT`/`PED_PROMPT` שנשלחים כבקשה. בדיקה של ההנחיה לבדה
+   החמיצה בדיוק אותם - כלומר תכנים פדגוגיים ומערך שיעור היו ממשיכים
+   לקבל את המנוע שמחזיר זבל. נתפס בבדיקה בדפדפן, לא בקריאת הקוד.   */
+function askWantsJson(system, q){
+  return /\bJSON\b/i.test(String(system == null ? '' : system)) ||
+         /\bJSON\b/i.test(String(q == null ? '' : q));
+}
+
 function askOne(key, system, q){
   if(!key) return askFree(system, q);
+  if(askWantsJson(system, q))
+    return askGemini(key, system, q).then(function(r){
+      return r || askGemini(key, system, q, GEMINI_LAST).then(function(r2){
+        return r2 || askFree(system, q);
+      });
+    });
   return askGemini(key, system, q).then(function(r){
     return r || askFree(system, q).then(function(r2){
       /* רשת הביטחון האחרונה, ורק אחרי שגם השערים החינמיים לא ענו. */
@@ -3868,6 +3908,127 @@ function halParse(txt){
   return null;
 }
 
+/* ===================================================================
+   26/11/26 — הצלת תשובה שבורה, ולמה היא נדרשת.
+
+   המשתמש ביקש "סימן קפג יורה דעה שולחן ערוך ונושאי כלים" וקיבל על
+   המסך, תחת הכותרת "📜 הסיכום", את ה-JSON **עצמו**: שמות שדות,
+   מרכאות וסוגריים, ובתוכם עברית מומצאת ("זברני נוחות"), מרכאה
+   שבורה (`"ז\"נ'",def":`) ותווים בתאילנדית באמצע משפט. מתחת היה
+   כתוב שם המנוע: pollinations.
+
+   שני שורשים, ושניהם נמדדו באותו בוקר מול המנועים החיים:
+   1. סדר המנועים - מטופל ב-`askOne` (שם כתובה המדידה המלאה).
+   2. **הקוד כאן**: כש-`halParse` לא הצליח, היחידה נבנתה מ-`r.text`
+      כפי שהוא. הכוונה ("JSON שלא נפרס אינו סיבה לאבד את התוכן")
+      נכונה, והביצוע הפוך: טקסט חופשי אכן צריך להיכנס כמו שהוא,
+      אבל JSON שבור **אינו** טקסט חופשי - הוא מבנה, ולכן מחלצים
+      ממנו את התוכן וזורקים את התחביר.
+
+   שלוש מדרגות, מהטובה לגרועה, וכולן טובות מ"להדפיס את ה-JSON":
+   א. `halFixJson` - תשובה שנקטעה באמצע (תקרת טוקנים) נסגרת ונפרסת,
+      והמשתמש מקבל סיכום **מעוצב** עד הנקודה שבה נקטע.
+   ב. `halTextOfJson` - אם המבנה אבוד, מחלצים את ערכי הטקסט בלבד
+      ומציגים אותם כרשימה קריאה. בלי מפתחות ובלי סוגריים.
+   ג. `halJunk` - ואם מה שחולץ אינו עברית בכלל, לא מציגים כלום:
+      סיכום הלכתי מומצא גרוע מהודעה שאומרת מה קרה ומה לעשות.
+   =================================================================== */
+
+/* תווי בקרה בתוך מחרוזת הם שגיאת תחביר ב-JSON, והמנועים החינמיים
+   שולחים אותם. ההחלפה ברווח אינה מאבדת תוכן.
+   הטווח נבנה ב-`fromCharCode` ולא נכתב כתו: תו בקרה שיושב בתוך
+   קובץ מקור שורד עריכות וקידודים גרוע מאוד, וזה בדיוק מה שקרה
+   כאן בניסיון הראשון (26/11/26). */
+var HAL_CTRL = new RegExp('[' + String.fromCharCode(0) + '-' +
+  String.fromCharCode(8) + String.fromCharCode(11) + String.fromCharCode(12) +
+  String.fromCharCode(14) + '-' + String.fromCharCode(31) + ']', 'g');
+
+/* תשובה שנקטעה: סוגרים את מה שנפתח. מהסוף אחורה, מהנקודה הבטוחה
+   הרחוקה ביותר - כך נשמר כמה שיותר תוכן. */
+function halFixJson(txt){
+  var s = String(txt == null ? '' : txt).trim();
+  s = s.replace(/^`{3}(?:json)?\s*/i, '').replace(/\s*`{3}$/, '');
+  var i = s.indexOf('{');
+  if(i < 0) return null;
+  /* תווי בקרה בתוך מחרוזת הם שגיאת תחביר ב-JSON, והמנועים החינמיים
+     שולחים אותם. החלפה ברווח אינה מאבדת תוכן. */
+  s = s.substring(i).replace(HAL_CTRL, ' ');
+  try { return JSON.parse(s); } catch(e){}
+  var open = [], inStr = false, esc = false, k, c, spots = [];
+  for(k = 0; k < s.length; k++){
+    c = s.charAt(k);
+    if(inStr){
+      if(esc) esc = false;
+      else if(c === '\\') esc = true;
+      else if(c === '"'){ inStr = false; spots.push([k, open.join('')]); }
+      continue;
+    }
+    if(c === '"') inStr = true;
+    else if(c === '{') open.push('}');
+    else if(c === '[') open.push(']');
+    else if(c === '}' || c === ']'){ open.pop(); spots.push([k, open.join('')]); }
+  }
+  var tries = 0;
+  for(k = spots.length - 1; k >= 0 && tries < 60; k--){
+    var need = spots[k][1];
+    if(!need) continue;                       /* כאן האובייקט כבר סגור */
+    tries++;
+    var cand = s.substring(0, spots[k][0] + 1).replace(/,\s*$/, '');
+    try {
+      var d = JSON.parse(cand + need.split('').reverse().join(''));
+      if(d && typeof d === 'object') return d;
+    } catch(e2){}
+  }
+  return null;
+}
+
+/* ערכי הטקסט מתוך JSON שאבד. רק שדות תוכן, בסדר שבו נכתבו. */
+var HAL_TXT_KEYS = 'html|heading|title|subtitle|label|note|intro|conclusion|term|def|rule|topic|name|text';
+function halTextOfJson(txt){
+  var re = new RegExp('"(?:' + HAL_TXT_KEYS + ')"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', 'g');
+  var out = [], m, s = String(txt == null ? '' : txt);
+  while((m = re.exec(s))){
+    var v = m[1].replace(/\\"/g, '"').replace(/\\n/g, ' ')
+                .replace(/\\t/g, ' ').replace(/\\\\/g, '\\').trim();
+    v = v.replace(/\s+/g, ' ');
+    if(v.length > 2 && out.indexOf(v) < 0) out.push(v);
+  }
+  return out;
+}
+
+/* פלט משובש. שני מדדים, ושניהם נמדדו על התשובה שהמשתמש קיבל בפועל:
+   תווים מכתב זר (שם היה "กรุงเทพมหานคร" בתוך משפט בעברית), ויחס
+   אותיות עבריות מכלל האותיות. הסף מכוון למעלה בכוונה: מוטב להציג
+   סיכום גבולי מאשר לפסול סיכום תקין. */
+function halJunk(txt){
+  var s = String(txt == null ? '' : txt);
+  var foreign = s.match(/[֐-־฀-๿Ѐ-ӿ؀-ۿ぀-ヿ一-鿿ऀ-ॿ가-힯]/g);
+  var zar = [], z;
+  for(z = 0; z < (foreign || []).length; z++)
+    if(!/[֐-־]/.test(foreign[z])) zar.push(foreign[z]);
+  if(zar.length >= 3) return 'כתב זר';
+  var heb = (s.match(/[א-ת]/g) || []).length;
+  var lat = (s.match(/[A-Za-z]/g) || []).length;
+  if(heb + lat > 200 && heb / (heb + lat) < 0.5) return 'כמעט בלי עברית';
+  if(heb < 60) return 'אין תוכן בעברית';
+  return '';
+}
+
+/* אותו מדד על מבנה: שמות השדות (אנגלית) מוסרים קודם, אחרת כל יחידה
+   תקינה נראית כ"חצי אנגלית" בגלל המפתחות עצמם. */
+function halJunkOf(d){
+  var s;
+  try { s = JSON.stringify(d); } catch(e){ return ''; }
+  return halJunk(String(s).replace(/"[A-Za-z_][A-Za-z0-9_]*"\s*:/g, ' '));
+}
+
+/* יחידה שכל תוכנה בלוק אחד של טקסט. זו הצורה שבה מוגש מה שהוצל. */
+function halNoteUnit(n, html, label){
+  return { title: 'יחידה ' + n, subtitle: '',
+    parts: [{ kind: 'source', label: label || '📜 הסיכום',
+      blocks: [{ type: 'note', html: html }] }] };
+}
+
 var HAL_PART_COLORS = { tur: ['#2f6f73', '#1f5357', '#e3f0f0'],
   by: ['#3b4f8a', '#2c3c6e', '#e6eaf5'], sa: ['#7a3e12', '#7a3e12', '#f4e6d4'] };
 var HAL_SRC_COLORS = [['#2f6f73', '#1f5357', '#e3f0f0'], ['#3b4f8a', '#2c3c6e', '#e6eaf5'],
@@ -4072,6 +4233,10 @@ function halDoc(meta, units){
   if(meta.subtitle) sub.appendChild(el('div', '', meta.subtitle));
   if(meta.order) sub.appendChild(el('div', '', meta.order));
   items.push({ el: sub, keep: true });
+
+  /* 26/11/26 — סיכום שהוצל מתשובה שבורה חייב לומר זאת, ובראש המסמך
+     ולא בשוליים: סיכום חלקי שנראה שלם הוא בדיוק מה שמטעה בלימוד. */
+  if(meta.rescued) items.push(halBox('⚠️ סיכום חלקי', meta.rescued, false));
 
   /* מפתח היחידות — בלי מספרי עמוד: הם נקבעים בעימוד עצמו, והבטחת
      מספר שאינו נכון גרועה מהיעדרו. */
@@ -4397,6 +4562,8 @@ function halFillNk(keys, chunk, d, say, token){
 function halRun(keys, material, extra, say, token){
   var chunks = splitChunks(material);
   var units = [], meta = null, via = '';
+  /* מה שהוצל ומה שנפסל - נאמר למשתמש בסוף, ולא נבלע. */
+  var partial = [], junked = [];
   return chunks.reduce(function(chain, chunk, i){
     return chain.then(function(){
       jobCheck(token);
@@ -4431,18 +4598,57 @@ function halRun(keys, material, extra, say, token){
         } else if(d && d.parts){
           units.push(d);
           if(!meta) meta = d;
+        } else if(!/^\s*[`{\[]|"(?:html|unit|parts|blocks|rows)"\s*:/.test(String(r.text))){
+          /* טקסט חופשי אמיתי - נכנס כפי שהוא, כמו קודם. זה המקרה
+             שההערה הישנה התכוונה אליו, והוא נשאר בדיוק כך. */
+          units.push(halNoteUnit(i + 1, String(r.text).replace(/[<>]/g, ' ')));
         } else {
-          /* JSON שלא נפרס אינו סיבה לאבד את התוכן: היחידה נבנית
-             מהטקסט כפי שהוא, והמשתמש מקבל סיכום ולא הודעת שגיאה. */
-          units.push({ title: 'יחידה ' + (i + 1), subtitle: '',
-            parts: [{ kind: 'source', label: '📜 הסיכום', blocks: [
-              { type: 'note', html: String(r.text).replace(/[<>]/g, ' ') }] }] });
+          /* JSON שבור. שלוש המדרגות של בלוק ההצלה למעלה, לפי הסדר. */
+          var fixed = halFixJson(r.text);
+          var u3 = fixed && (fixed.unit || (fixed.parts ? fixed : null));
+          if(u3 && !halJunkOf(u3)){
+            units.push(u3);
+            if(!meta) meta = fixed;
+            partial.push(i + 1);
+          } else {
+            var lines = halTextOfJson(r.text), body = lines.join(' ');
+            if(lines.length >= 3 && !halJunk(body)){
+              units.push(halNoteUnit(i + 1, '<ul><li>' +
+                lines.join('</li><li>').replace(/[<>](?![/]?(?:li|ul)>)/g, ' ') +
+                '</li></ul>', '📜 הסיכום (חלקי)'));
+              partial.push(i + 1);
+            } else {
+              /* אין כאן תוכן בעברית שאפשר להציג. סיכום הלכתי מומצא
+                 גרוע מהודעה שאומרת מה קרה ומה לעשות, ולכן לא
+                 מציירים כלום והמשתמש מקבל הסבר בסוף. */
+              junked.push((r.via || 'המנוע') + ': ' +
+                (halJunk(body) || halJunkOf(u3) || 'תשובה שאינה סיכום'));
+            }
+          }
         }
       });
     });
   }, Promise.resolve()).then(function(){
-    if(!units.length) return null;
+    /* 26/11/26 — תשובה שנפסלה כולה. ההודעה אומרת למשתמש בדיוק מה
+       קרה ומה הוא יכול לעשות, כי "נסה שוב" על מכסה שנגמרה יחזיר
+       אותה תשובה בדיוק. הוספת מפתח שני היא הדרך היחידה שבשליטתו:
+       מכסת גוגל נספרת לכל פרויקט, ולכן מפתח נוסף הוא מכסה שלמה. */
+    if(!units.length){
+      if(junked.length)
+        throw new Error('המכסה היומית של מנוע גוגל נגמרה, והמנוע החינמי ' +
+          'שנכנס במקומו החזיר תשובה משובשת — ולכן לא הצגתי אותה. ' +
+          'אפשר לנסות שוב בעוד כמה שעות (המכסה מתחדשת כל יום), או ' +
+          'להוסיף באזור הניהול מפתח גוגל שני: כל מפתח הוא מכסה יומית ' +
+          'נוספת. [' + junked.join(' · ') + ']');
+      return null;
+    }
     if(!meta) meta = {};
+    /* סיכום שהוצל מתשובה שבורה נאמר במפורש, ובראש המסמך. סיכום חלקי
+       שנראה שלם הוא בדיוק מה שמטעה בלימוד. */
+    if(partial.length)
+      meta.rescued = 'התשובה של המנוע חזרה שבורה או קטועה' +
+        (partial.length === 1 ? '' : ' בחלק מהיחידות') +
+        ', ומה שאפשר היה להציל מוצג כאן. כדאי להריץ שוב כשהמכסה תתחדש.';
     /* ההגנה: מסמך בלי תוכן לא יופק. ההודעה אומרת מה לעשות אחרת,
        כי "נסה שוב" על חומר שלא הובא יחזיר בדיוק את אותו כלום. */
     var len = halBodyLen(units);
@@ -4460,7 +4666,6 @@ function halRun(keys, material, extra, say, token){
       (chunks.length > 1 ? (' · ' + chunks.length + ' יחידות') : '') };
   });
 }
-
 /* ==== END sheet_client ==== */
 /* ==== BEGIN gem_client ==== */
 /* ===================================================================
